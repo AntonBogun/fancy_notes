@@ -3,6 +3,8 @@ import './App.css';
 import ProgressBar from 'react-bootstrap/ProgressBar';
 import { useState, useEffect } from 'react'
 import axios from 'axios'
+// const cors = require('cors')
+// app.use(cors())
 
 
 window.mobileCheck = function () {
@@ -98,11 +100,10 @@ function App() {
   function get_data(){
     if (state.apikey && state.appid) {
       var apikey = state.apikey; var appid = state.appid;
-      var data=JSON.stringify({"collection":"notes","database":"notes", "datasource":"Cluster0"});
-      var config={method: 'post', url: `https://data.mongodb-api.com/app/${appid}/endpoint/data/v1/action/find`,
-      headers: {'Content-Type': 'application/json', 'Access-Control-Request-Headers': '*', 'api-key': apikey},
-      data : data};
-      axios(config)
+      var data={filter:{interesting: "ello wor"}};
+      var config={headers: {'apikey': apikey, 'appid': appid, 'api_action': 'find'}, data: data};
+      //send post request to "/cors_avoidance" with data and config
+      axios.post('/cors_avoidance', data, config)
       .then(function (response) {
         html_log(JSON.stringify(response.data));
       })
