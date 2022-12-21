@@ -5,7 +5,28 @@
   color: white;
   font-size: 20px;
   text-shadow: 0 0 10px black, 0 0 10px black;
-  margin: 10px 10px 10px 10px;
+  /* margin: 10px 10px 10px 10px; */
+  /* take up the whole screen */
+  width: 100vw;
+  height: 100vh;
+  max-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+
+.log {
+
+  color: red;
+}
+
+
+
+/*black background if theme is dark*/
+@media (prefers-color-scheme: dark) {
+  .App {
+    background-color: #1D2026;
+  }
 }
 
 .righthalf{

@@ -1,7 +1,7 @@
 import logo from './logo.svg';
 import './App.css';
 import ProgressBar from 'react-bootstrap/ProgressBar';
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import axios from 'axios'
 // const cors = require('cors')
 // app.use(cors())
@@ -28,7 +28,7 @@ window.mobileCheck = function () {
 // the api key will be entered in a password field, and stored in local storage. For desktop wallpaper, keyboard input is not allowed, so
 // api key will be specified in wallpaper user text field (received through window.wallpaperPropertyListener on load)
 
-//each note is must have a title and a function to evaluate urgency, and whether the note should be hidden or not.
+//each note has a title, description and a function to evaluate urgency, and whether the note should be hidden or not.
 // The function will be called every couple seconds, and all notes will be sorted by urgency.
 // Additionally, each note can have any number of extra properties and functions, which are used to
 // provide additional functionality to the note. The extra properties and functions are defined by the user and will be displayed
@@ -46,11 +46,18 @@ function reload() {
 
 
 function App() {
+
   const [state, setState] = useState({
     html_log_list: [],
-    apikey: null,
-    appid: null
+    apikey: "",
+    appid: "",
+    transparent: false,
+    predefined: false
   });
+  const [notes, setNotes] = useState([]);
+  function update_state(state_changes) {
+    setState({...state, ...state_changes})
+  }
   function html_log(obj,state_changes={}) {//delete first element if more than 50 lines
     if (!Array.isArray(obj)) {
       if (state.html_log_list.length > 50) {
@@ -68,85 +75,295 @@ function App() {
   }
 
   useEffect(() => {
-    var apikey, appid;
     if (window.location.search) {
       try {
-        apikey = window.location.search.split('&')[0].split('=')[1];
-        appid = window.location.search.split('&')[1].split('=')[1];
+        //split search string into dictionary, with = as key-value separator and & as key separator
+        let search_dict = {};
+        window.location.search.slice(1).split('&').forEach(x => search_dict[x.split('=')[0]] = x.split('=')[1]);
+        // apikey = window.location.search.split('&')[0].split('=')[1];
+        // appid = window.location.search.split('&')[1].split('=')[1];
+        let new_state = {predefined: true};
+        let upd=(key,newkey)=>{
+          if(search_dict[key]){
+            new_state[newkey]=search_dict[key];
+          }
+        }
+        upd('apikey','apikey');
+        upd('appid','appid');
+        upd('t','transparent');
+        if(!(new_state['apikey']&&new_state['appid'])){
+          throw "apikey and appid must be specified";
+        }
+        if(!new_state['transparent']){
+          new_state['transparent']=false;
+        }
         //save to local storage
-        localStorage.setItem('apikey', apikey);
-        localStorage.setItem('appid', appid);
-        html_log(['apikey: ' + apikey, 'appid: ' + appid], {apikey: apikey, appid: appid});
+        localStorage.setItem('apikey', new_state['apikey']);
+        localStorage.setItem('appid', new_state['appid']);
+        // html_log(['apikey: ' + apikey, 'appid: ' + appid], {apikey: apikey, appid: appid, transparent: transparent, predefined: true});
+        update_state(new_state);
       } catch (e) {
         console.log(e);
         html_log(e);
         // throw e; //doesn't matter because the page will be reloaded
       }
     }else{
+      // console.log(undefined&&undefined?"ee":"no")
       //this is quite scary because localstorage does not get cleared even on cache clear
-      if(localStorage.getItem('apikey') && localStorage.getItem('appid')){
-        apikey = localStorage.getItem('apikey');
-        appid = localStorage.getItem('appid');
-        html_log(['found local storage apikey and appid',
-        'apikey: ' + apikey, 'appid: ' + appid], {apikey: apikey, appid: appid});
+      let apikey = localStorage.getItem('apikey');
+      let appid = localStorage.getItem('appid');
+      if(apikey&&(apikey!=="undefined")&&appid&&(appid!=="undefined")){
+        // console.log(localStorage.getItem('apikey') && localStorage.getItem('appid'))//undefined?? oh right it's a string
+        // html_log(['found local storage apikey and appid',
+        // 'apikey: ' + apikey, 'appid: ' + appid], {apikey: apikey, appid: appid});
+
+        // console.log("found")
+        // html_log("found local storage apikey and appid: " + apikey + ", " + appid);
+        update_state({apikey: apikey, appid: appid, predefined: true});
       }else{
         html_log('no apikey and appid found, please enter them manually');
       }
     }
   }, [window.location.search]);
   
+  useEffect(() => {
+    if (state.apikey && state.appid && state.predefined) {
+      load_all_data();
+    }
+  }, [state.predefined]);
+  
   // get notes data from mongodb
   // const [notes, set_notes] = useState([]);
-  function get_data(){
-    if (state.apikey && state.appid) {
-      var apikey = state.apikey; var appid = state.appid;
-      var data={filter:{interesting: "ello wor"}};
-      var config={headers: {'apikey': apikey, 'appid': appid, 'api_action': 'find'}, data: data};
-      //send post request to "/cors_avoidance" with data and config
-      axios.post('/cors_avoidance', data, config)
-      .then(function (response) {
-        html_log(JSON.stringify(response.data));
-      })
-      .catch(function (error) {
-        html_log(error);
-      });
-    } else {
-      html_log('no apikey and appid');
-    }
+  function db_request(action, data, response, error) {
+    axios.post('/cors_avoidance', data, {headers: {'apikey': state.apikey, 'appid': state.appid, 'api_action': action}}).
+    then(response).
+    catch(error);
   }
+// console.log(Object.keys({a:1,b:2}))
+  function load_all_data(){
+    update_state({predefined: true});
+    db_request('find', {}, function (response) {
+      let data = JSON.parse(response.data);
+      if(Object.keys(data).length!==1){
+        console.error("there isn't just the 'documents': ",data)
+        html_log("there isn't just the 'documents': "+JSON.stringify(data));
+      }
+      setNotes(data.documents);
+    }, function (error) {
+      html_log(error, {predefined: false});
+    });
+  }
+  // Name : string (with a limit?)
+  // Description : arbitrary string
+  // Data : contains all the custom data + code
+  // Data._priority_c : code for the priority function (default = ()=>1, represented as "")
+  // Data._settings_c : code for any custom settings components and the related functionality (default = ()=></>, represented as "", will be transpiled)
+  // Data._jsonify_c : code for creating a new dict that will be assembled together with other notes and 
+  //   JSON.stringify()-ed into update to database (default = ()=>{name,desc,data._priority_c,_settings_c,_jsonify_c,_auto},
+  //   represented as "", will also need to provide this as a helper func to be able to build upon, i.e. _NOTE_INCLUDE_DEFAULT())
+  // Data._auto : arbitrary, automatically included by _jsonify_c by default
+  // Data.* : arbitrary
+
+  function construct_priorities(){
+    let priorities = [];
+    let errors = [];
+    let default_priority = ()=>1;
+    notes.forEach((note,i)=>{
+      let priority = default_priority;
+      try{
+        if(note.data._priority_c){
+          priority = eval(note.data._priority_c);
+        }
+      }catch(e){
+        console.error(e);
+        html_log(e);
+        errors.push(i);
+      }
+      priorities.push(priority);
+    });
+    return [priorities,errors];
+  }
+  //adds/updates {key:[vals]} in data of each note, setNotes afterwards
+  function update_datakeys_notes(keymap){
+    //no sanity checks for length of each key array
+    let new_notes = [];
+    for(let i=0;i<notes.length;i++){
+      let new_note = {...notes[i]};
+      
 
 
 
 
   // const barlist = []
+  // Object.keys(window).forEach(function(key) {console.log(key);});
+  // console.log(Object.keys(this));
 
+  // Object.keys(this).forEach(function(key) {
+  //   try{
+  //     console.log(key);
+  //   }catch(e){
+  //     console.log(e);
+  //   }
+  // });
+  function f(){
+    html_log('hello world');
+  }
   return (
-    <div className="App">
-      test
-      {/* <div className="righthalf"> */}
-      <ProgressBar now={45} label={`${45}%`} />
-      {/* <header className="App-header">
-        <ProgressBar now={45} label={`${45}%`} />
-      </header> */}
-      <button onClick={reload}>reload</button>
-      <button onClick={get_data}>get data</button>
-      <Log html_log_list={state.html_log_list} />
+    <div className="App" style={state.transparent?{backgroundColor: 'transparent'}:{}}>
+      <div className="log_remainder" style={{flex: 1,overflowY: "scroll"}}>
+        {state.predefined ?
+          <Notes 
+            data={notes} 
+            func={f} 
+            reset_func={() => {
+              // setNotes([]);
+              // load_all_data();
+              update_state({predefined: false});
+            }}
+          />
+          :<ApiInfoInput 
+            onChange={(e, key) => {
+              localStorage.setItem(key, e.target.value);
+              setState({...state, [key]: e.target.value});
+            }}
+            apikey={state.apikey}
+            appid={state.appid}
+            request={() =>{
+              setNotes([]);
+              load_all_data();
+            }}
+          />
+        }
+      </div>
+      <Log html_log_list={state.html_log_list} clear_func={() => setState({...state, html_log_list: []})} />
     </div>
     // </div>
   );
 }
 
-
-
-
-function Log({ html_log_list }) {
-  return (
-    <div className="log">
-      {/* <p> tag takes too much vertical space normally */}
-      {html_log_list.map((x, i) => <div key={i}>{x}</div>)}
+function ApiInfoInput({onChange, apikey, appid, request}){
+  return(
+    <div className="api_info_input">
+      <p>
+        ApiKey:
+        <input type="password" placeholder="apikey" value={apikey} onChange={(e) => onChange(e, 'apikey')} />
+      </p>
+      <p>
+        AppId:
+        <input type="password" placeholder="appid" value={appid} onChange={(e) => onChange(e, 'appid')} />
+      </p>
+      <button onClick={request}>request</button>
     </div>
+  )
+}
+
+
+function Notes({data, func, reset_func}){
+  if (data.length === 0) {
+    return (
+      <div className="notes">
+        Loading...
+      </div>
+    );
+  }
+  return(
+    <div className="notes">
+      <button onClick={func}>func</button>
+      <br/>
+      <button onClick={reset_func}>reset</button>
+      <br/>
+      {data.map((note, i) => <div key={i}>{JSON.stringify(note)}</div>)}
+
+      {/* {Array(20).fill().map((_,i) =>
+        <p key={i}>
+        Lorem ipsum dolor sit amet, consectetur adipiscing elit. Quisque dictum leo sit amet commodo pretium. Curabitur venenatis feugiat sollicitudin. Quisque vitae nunc at felis placerat gravida. Curabitur interdum viverra nisi a hendrerit. Donec pharetra libero risus, in semper nulla egestas sed. Aenean ac sapien cursus, euismod mauris vel, volutpat nunc. Nulla rutrum nisi nec tristique maximus. Aliquam malesuada sem bibendum, vulputate sapien vel, venenatis massa. Curabitur est tortor, feugiat at justo et, tincidunt laoreet sem.
+        </p>    
+      )} */}
+    </div>
+  )
+}
+
+// const Log= ({ html_log_list }) => {
+//   console.log("this", this);
+//   return (
+//     <div className="log">
+//       {/* <p> tag takes too much vertical space normally */}
+//       {html_log_list.map((x, i) => <div key={i}>{x}</div>)}
+//     </div>
+//   );
+// }
+
+function Log({ html_log_list, clear_func }) {
+  const loggerRef = useRef(null);
+  const [scroll_to_bottom, setScrollToBottom] = useState(true);
+
+  useEffect(() => {
+    if (loggerRef.current) {
+      if (scroll_to_bottom) {
+        // Scroll to the bottom of the logger
+        loggerRef.current.scrollTop = loggerRef.current.scrollHeight;
+      }
+    }
+  }, [html_log_list, scroll_to_bottom]);
+
+  const handleScroll = () => {
+    // Check if the logger is scrolled to the bottom
+    const isScrolledToBottom =
+      // loggerRef.current.scrollTop + loggerRef.current.clientHeight ===
+      // loggerRef.current.scrollHeight;//this MISBEHAVES when the screen is resized, i.e. dragged to be smaller
+      Math.abs(loggerRef.current.scrollTop + loggerRef.current.clientHeight - loggerRef.current.scrollHeight) < 4;
+    //specifically: scrollTop 124.80000305175781
+    // console.log("scrollTop", loggerRef.current.scrollTop);
+    // console.log("clientHeight", loggerRef.current.clientHeight);
+    // console.log("scrollHeight", loggerRef.current.scrollHeight);
+    // Update the scroll_to_bottom state variable
+    setScrollToBottom(isScrolledToBottom);
+  };//after a long battle of many words, chatgpt figured it out
+  //"Clear" button in the top right corner of the logger
+  return (
+    html_log_list.length > 0 ?
+    <div
+      className="log"
+      style={{
+        maxHeight: '20vh',
+        position: 'relative',
+        padding: '10px',
+        maxHeight: '20vh+5px',
+        outline: '1px solid red'}}
+    >
+      <button onClick={clear_func} style={{position: 'absolute', top: 0, right: 10}}>Clear</button>
+      <div ref={loggerRef}
+      onScroll={handleScroll}
+      style={{overflow: 'auto', maxHeight: '20vh', height:'auto',}} 
+      className="log_scroll">
+      {html_log_list.map((x, i) => <div key={i}>{x}</div>)}
+      </div>
+    </div>
+    :
+    <div className ="log"/>
+    // <div
+    //   ref={loggerRef}
+    //   className="log"
+    //   style={{
+    //     maxHeight: '20vh',
+    //     overflow: 'auto',
+    //     height:'auto',
+    //     position: 'relative',
+    //     outline: html_log_list.length > 0 ? '1px solid red' : 'none' }}
+    //   onScroll={handleScroll}
+    // >
+    //   <button onClick={clear_func} style={{position: 'absolute', top: 0, right: 0}}>Clear</button>
+    //   {html_log_list.map((x, i) => <div key={i}>{x}</div>)}
+    // </div>
   );
 }
+  // useEffect(() => {
+  //   // Set the height to 0 if there are no logs, and to 'auto' if there are logs
+  //   setHeight(html_log_list.length > 0 ? 'auto' : 0);
+  // }, [html_log_list]);
+
+
+
 
 
 
