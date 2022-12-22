@@ -1,15 +1,24 @@
-import logo from './logo.svg';
-import './App.css';
-import ProgressBar from 'react-bootstrap/ProgressBar';
-import { useState, useEffect, useRef } from 'react'
-import axios from 'axios'
+import logo from "./logo.svg";
+import "./App.css";
+import ProgressBar from "react-bootstrap/ProgressBar";
+import { useState, useEffect, useRef } from "react";
+import axios from "axios";
 // const cors = require('cors')
 // app.use(cors())
 
-
 window.mobileCheck = function () {
   let check = false;
-  (function (a) { if (/(android|bb\d+|meego).+mobile|avantgo|bada\/|blackberry|blazer|compal|elaine|fennec|hiptop|iemobile|ip(hone|od)|iris|kindle|lge |maemo|midp|mmp|mobile.+firefox|netfront|opera m(ob|in)i|palm( os)?|phone|p(ixi|re)\/|plucker|pocket|psp|series(4|6)0|symbian|treo|up\.(browser|link)|vodafone|wap|windows ce|xda|xiino/i.test(a) || /1207|6310|6590|3gso|4thp|50[1-6]i|770s|802s|a wa|abac|ac(er|oo|s\-)|ai(ko|rn)|al(av|ca|co)|amoi|an(ex|ny|yw)|aptu|ar(ch|go)|as(te|us)|attw|au(di|\-m|r |s )|avan|be(ck|ll|nq)|bi(lb|rd)|bl(ac|az)|br(e|v)w|bumb|bw\-(n|u)|c55\/|capi|ccwa|cdm\-|cell|chtm|cldc|cmd\-|co(mp|nd)|craw|da(it|ll|ng)|dbte|dc\-s|devi|dica|dmob|do(c|p)o|ds(12|\-d)|el(49|ai)|em(l2|ul)|er(ic|k0)|esl8|ez([4-7]0|os|wa|ze)|fetc|fly(\-|_)|g1 u|g560|gene|gf\-5|g\-mo|go(\.w|od)|gr(ad|un)|haie|hcit|hd\-(m|p|t)|hei\-|hi(pt|ta)|hp( i|ip)|hs\-c|ht(c(\-| |_|a|g|p|s|t)|tp)|hu(aw|tc)|i\-(20|go|ma)|i230|iac( |\-|\/)|ibro|idea|ig01|ikom|im1k|inno|ipaq|iris|ja(t|v)a|jbro|jemu|jigs|kddi|keji|kgt( |\/)|klon|kpt |kwc\-|kyo(c|k)|le(no|xi)|lg( g|\/(k|l|u)|50|54|\-[a-w])|libw|lynx|m1\-w|m3ga|m50\/|ma(te|ui|xo)|mc(01|21|ca)|m\-cr|me(rc|ri)|mi(o8|oa|ts)|mmef|mo(01|02|bi|de|do|t(\-| |o|v)|zz)|mt(50|p1|v )|mwbp|mywa|n10[0-2]|n20[2-3]|n30(0|2)|n50(0|2|5)|n7(0(0|1)|10)|ne((c|m)\-|on|tf|wf|wg|wt)|nok(6|i)|nzph|o2im|op(ti|wv)|oran|owg1|p800|pan(a|d|t)|pdxg|pg(13|\-([1-8]|c))|phil|pire|pl(ay|uc)|pn\-2|po(ck|rt|se)|prox|psio|pt\-g|qa\-a|qc(07|12|21|32|60|\-[2-7]|i\-)|qtek|r380|r600|raks|rim9|ro(ve|zo)|s55\/|sa(ge|ma|mm|ms|ny|va)|sc(01|h\-|oo|p\-)|sdk\/|se(c(\-|0|1)|47|mc|nd|ri)|sgh\-|shar|sie(\-|m)|sk\-0|sl(45|id)|sm(al|ar|b3|it|t5)|so(ft|ny)|sp(01|h\-|v\-|v )|sy(01|mb)|t2(18|50)|t6(00|10|18)|ta(gt|lk)|tcl\-|tdg\-|tel(i|m)|tim\-|t\-mo|to(pl|sh)|ts(70|m\-|m3|m5)|tx\-9|up(\.b|g1|si)|utst|v400|v750|veri|vi(rg|te)|vk(40|5[0-3]|\-v)|vm40|voda|vulc|vx(52|53|60|61|70|80|81|83|85|98)|w3c(\-| )|webc|whit|wi(g |nc|nw)|wmlb|wonu|x700|yas\-|your|zeto|zte\-/i.test(a.substr(0, 4))) check = true; })(navigator.userAgent || navigator.vendor || window.opera);
+  (function (a) {
+    if (
+      /(android|bb\d+|meego).+mobile|avantgo|bada\/|blackberry|blazer|compal|elaine|fennec|hiptop|iemobile|ip(hone|od)|iris|kindle|lge |maemo|midp|mmp|mobile.+firefox|netfront|opera m(ob|in)i|palm( os)?|phone|p(ixi|re)\/|plucker|pocket|psp|series(4|6)0|symbian|treo|up\.(browser|link)|vodafone|wap|windows ce|xda|xiino/i.test(
+        a
+      ) ||
+      /1207|6310|6590|3gso|4thp|50[1-6]i|770s|802s|a wa|abac|ac(er|oo|s\-)|ai(ko|rn)|al(av|ca|co)|amoi|an(ex|ny|yw)|aptu|ar(ch|go)|as(te|us)|attw|au(di|\-m|r |s )|avan|be(ck|ll|nq)|bi(lb|rd)|bl(ac|az)|br(e|v)w|bumb|bw\-(n|u)|c55\/|capi|ccwa|cdm\-|cell|chtm|cldc|cmd\-|co(mp|nd)|craw|da(it|ll|ng)|dbte|dc\-s|devi|dica|dmob|do(c|p)o|ds(12|\-d)|el(49|ai)|em(l2|ul)|er(ic|k0)|esl8|ez([4-7]0|os|wa|ze)|fetc|fly(\-|_)|g1 u|g560|gene|gf\-5|g\-mo|go(\.w|od)|gr(ad|un)|haie|hcit|hd\-(m|p|t)|hei\-|hi(pt|ta)|hp( i|ip)|hs\-c|ht(c(\-| |_|a|g|p|s|t)|tp)|hu(aw|tc)|i\-(20|go|ma)|i230|iac( |\-|\/)|ibro|idea|ig01|ikom|im1k|inno|ipaq|iris|ja(t|v)a|jbro|jemu|jigs|kddi|keji|kgt( |\/)|klon|kpt |kwc\-|kyo(c|k)|le(no|xi)|lg( g|\/(k|l|u)|50|54|\-[a-w])|libw|lynx|m1\-w|m3ga|m50\/|ma(te|ui|xo)|mc(01|21|ca)|m\-cr|me(rc|ri)|mi(o8|oa|ts)|mmef|mo(01|02|bi|de|do|t(\-| |o|v)|zz)|mt(50|p1|v )|mwbp|mywa|n10[0-2]|n20[2-3]|n30(0|2)|n50(0|2|5)|n7(0(0|1)|10)|ne((c|m)\-|on|tf|wf|wg|wt)|nok(6|i)|nzph|o2im|op(ti|wv)|oran|owg1|p800|pan(a|d|t)|pdxg|pg(13|\-([1-8]|c))|phil|pire|pl(ay|uc)|pn\-2|po(ck|rt|se)|prox|psio|pt\-g|qa\-a|qc(07|12|21|32|60|\-[2-7]|i\-)|qtek|r380|r600|raks|rim9|ro(ve|zo)|s55\/|sa(ge|ma|mm|ms|ny|va)|sc(01|h\-|oo|p\-)|sdk\/|se(c(\-|0|1)|47|mc|nd|ri)|sgh\-|shar|sie(\-|m)|sk\-0|sl(45|id)|sm(al|ar|b3|it|t5)|so(ft|ny)|sp(01|h\-|v\-|v )|sy(01|mb)|t2(18|50)|t6(00|10|18)|ta(gt|lk)|tcl\-|tdg\-|tel(i|m)|tim\-|t\-mo|to(pl|sh)|ts(70|m\-|m3|m5)|tx\-9|up(\.b|g1|si)|utst|v400|v750|veri|vi(rg|te)|vk(40|5[0-3]|\-v)|vm40|voda|vulc|vx(52|53|60|61|70|80|81|83|85|98)|w3c(\-| )|webc|whit|wi(g |nc|nw)|wmlb|wonu|x700|yas\-|your|zeto|zte\-/i.test(
+        a.substr(0, 4)
+      )
+    )
+      check = true;
+  })(navigator.userAgent || navigator.vendor || window.opera);
   return check;
 };
 
@@ -19,7 +28,7 @@ window.mobileCheck = function () {
 // will be defined, which can be used for setting the background image. Editing of the notes data is not allowed in this mode.
 
 //if the page runs in a desktop browser, interaction will be allowed by right clicking on a button (which is not possible in wallpaper mode),
-// which will bring up "mark as completed", "delete" (will ask for confirmation), and "edit" (will bring up a customizeable area 
+// which will bring up "mark as completed", "delete" (will ask for confirmation), and "edit" (will bring up a customizeable area
 // for editing behavior of the note)
 
 //if the page runs in a mobile browser, the layout will be slightly different, but similar to the desktop browser.
@@ -35,244 +44,468 @@ window.mobileCheck = function () {
 // in the edit menu, where applicable.
 // if a note is hidden, it will only be displayed if the user clicks on the "display all" button.
 
-
 //in the two desktop modes, the urgency will be displayed as a progress bar, and notes will be stacked vertically on the right side of the screen
 //in the mobile mode, the bars take the whole screen. Only vertical orientation is supported.
-
 
 function reload() {
   window.location.reload();
 }
-
+let _is_updating_data=false //=prevent settings from opening while updating
+let _settings_open=false //=prevent updates while settings are open
 
 function App() {
-
   const [state, setState] = useState({
     html_log_list: [],
     apikey: "",
     appid: "",
-    transparent: false,
-    predefined: false
+    transparent: false, //transparent background for use with wallpaper engine
+    display_notes: false, //go to api input if false
+    last_db_update: null, //used for detecting change by other instances
+    autoupdate_interval: null //reference to interval for autoupdate
   });
   const [notes, setNotes] = useState([]);
   function update_state(state_changes) {
-    setState({...state, ...state_changes})
+    setState({ ...state, ...state_changes });
   }
-  function html_log(obj,state_changes={}) {//delete first element if more than 50 lines
+  function html_log(obj, state_changes = {}) {
+    //delete first element if more than 50 lines
     if (!Array.isArray(obj)) {
       if (state.html_log_list.length > 50) {
-        setState({...state, html_log_list: state.html_log_list.slice(1).concat(obj.toString()), ...state_changes})
+        setState({ ...state, html_log_list: state.html_log_list.slice(1).concat(obj.toString()), ...state_changes });
       } else {
-        setState({...state, html_log_list: state.html_log_list.concat(obj.toString()), ...state_changes})
+        setState({ ...state, html_log_list: state.html_log_list.concat(obj.toString()), ...state_changes });
       }
     } else {
       if (state.html_log_list.length + obj.length > 50) {
-        setState({...state, html_log_list: state.html_log_list.slice(obj.length).concat(obj.map(x => x.toString())), ...state_changes})
+        setState({
+          ...state,
+          html_log_list: state.html_log_list.slice(obj.length).concat(obj.map((x) => x.toString())),
+          ...state_changes,
+        });
       } else {
-        setState({...state, html_log_list: state.html_log_list.concat(obj.map(x => x.toString())), ...state_changes})
+        setState({
+          ...state,
+          html_log_list: state.html_log_list.concat(obj.map((x) => x.toString())),
+          ...state_changes,
+        });
       }
     }
   }
 
+  //=load apikey and appid from web search string/local storage
+  //=if success, immediately request the data and set display_notes to true
   useEffect(() => {
     if (window.location.search) {
       try {
         //split search string into dictionary, with = as key-value separator and & as key separator
         let search_dict = {};
-        window.location.search.slice(1).split('&').forEach(x => search_dict[x.split('=')[0]] = x.split('=')[1]);
-        // apikey = window.location.search.split('&')[0].split('=')[1];
-        // appid = window.location.search.split('&')[1].split('=')[1];
-        let new_state = {predefined: true};
-        let upd=(key,newkey)=>{
-          if(search_dict[key]){
-            new_state[newkey]=search_dict[key];
-          }
-        }
-        upd('apikey','apikey');
-        upd('appid','appid');
-        upd('t','transparent');
-        if(!(new_state['apikey']&&new_state['appid'])){
-          throw "apikey and appid must be specified";
-        }
-        if(!new_state['transparent']){
-          new_state['transparent']=false;
-        }
+        window.location.search
+          .slice(1)
+          .split("&")
+          .forEach((x) => (search_dict[x.split("=")[0]] = x.split("=")[1]));
+        let new_state = { display_notes: true };
+        let upd = (key, newkey) => {
+          if (search_dict[key]) new_state[newkey] = search_dict[key];
+        };
+        upd("apikey", "apikey");
+        upd("appid", "appid");
+        upd("t", "transparent");
+        if (!(new_state["apikey"] && new_state["appid"])) throw "apikey and appid must be specified";
+        if (!new_state["transparent"]) new_state["transparent"] = false;
         //save to local storage
-        localStorage.setItem('apikey', new_state['apikey']);
-        localStorage.setItem('appid', new_state['appid']);
-        // html_log(['apikey: ' + apikey, 'appid: ' + appid], {apikey: apikey, appid: appid, transparent: transparent, predefined: true});
-        update_state(new_state);
+        localStorage.setItem("apikey", new_state["apikey"]);
+        localStorage.setItem("appid", new_state["appid"]);
+        update_state(new_state, full_reload);//full reload only after setting local storage
       } catch (e) {
         console.log(e);
         html_log(e);
-        // throw e; //doesn't matter because the page will be reloaded
       }
-    }else{
-      // console.log(undefined&&undefined?"ee":"no")
-      //this is quite scary because localstorage does not get cleared even on cache clear
-      let apikey = localStorage.getItem('apikey');
-      let appid = localStorage.getItem('appid');
-      if(apikey&&(apikey!=="undefined")&&appid&&(appid!=="undefined")){
-        // console.log(localStorage.getItem('apikey') && localStorage.getItem('appid'))//undefined?? oh right it's a string
-        // html_log(['found local storage apikey and appid',
-        // 'apikey: ' + apikey, 'appid: ' + appid], {apikey: apikey, appid: appid});
-
-        // console.log("found")
-        // html_log("found local storage apikey and appid: " + apikey + ", " + appid);
-        update_state({apikey: apikey, appid: appid, predefined: true});
-      }else{
-        html_log('no apikey and appid found, please enter them manually');
+    } else {
+      //!this is quite scary because localstorage does not get cleared even on cache clear
+      let apikey = localStorage.getItem("apikey");
+      let appid = localStorage.getItem("appid");
+      if (apikey && apikey !== "undefined" && appid && appid !== "undefined") {
+        //!undefined is a string
+        update_state({ apikey: apikey, appid: appid}, full_reload);
+      } else {
+        html_log("no apikey and appid found, please enter them manually");
       }
     }
   }, [window.location.search]);
-  
-  useEffect(() => {
-    if (state.apikey && state.appid && state.predefined) {
-      load_all_data();
-    }
-  }, [state.predefined]);
-  
+
+  // useEffect(() => {
+  //   if (state.apikey && state.appid && state.display_notes) {
+  //     load_all_data();
+  //   }
+  // }, [state.display_notes]);
+
   // get notes data from mongodb
-  // const [notes, set_notes] = useState([]);
   function db_request(action, data, response, error) {
-    axios.post('/cors_avoidance', data, {headers: {'apikey': state.apikey, 'appid': state.appid, 'api_action': action}}).
-    then(response).
-    catch(error);
+    axios
+      .post("/cors_avoidance", data, {
+        headers: {
+          apikey: state.apikey,
+          appid: state.appid,
+          api_action: action,
+        },
+      })
+      .then(response)
+      .catch(error);
   }
-// console.log(Object.keys({a:1,b:2}))
-  function load_all_data(){
-    update_state({predefined: true});
-    db_request('find', {}, function (response) {
-      let data = JSON.parse(response.data);
-      if(Object.keys(data).length!==1){
-        console.error("there isn't just the 'documents': ",data)
-        html_log("there isn't just the 'documents': "+JSON.stringify(data));
-      }
-      setNotes(data.documents);
-    }, function (error) {
-      html_log(error, {predefined: false});
-    });
-  }
+  // note structure:
+  // {(outer)*not saved*,
+  // note: {(inner)*saved, also what is loaded from the database*}
+  // }
+  // Inner:
+  // _id : string, required for MongoDB.
+  //   !NOTE: the id can not be changed or created locally, it is generated by the database and returned to the client
+  // type : "NOTE" for all notes, "DATE" for last update
   // Name : string (with a limit?)
   // Description : arbitrary string
   // Data : contains all the custom data + code
   // Data._priority_c : code for the priority function (default = ()=>1, represented as "")
   // Data._settings_c : code for any custom settings components and the related functionality (default = ()=></>, represented as "", will be transpiled)
-  // Data._jsonify_c : code for creating a new dict that will be assembled together with other notes and 
-  //   JSON.stringify()-ed into update to database (default = ()=>{name,desc,data._priority_c,_settings_c,_jsonify_c,_auto},
+  // Data._jsonify_c : code for creating a new dict that will be assembled together with other notes and
+  //   JSON.stringify()-ed into update to database (default = default_jsonify)
   //   represented as "", will also need to provide this as a helper func to be able to build upon, i.e. _NOTE_INCLUDE_DEFAULT())
   // Data._auto : arbitrary, automatically included by _jsonify_c by default
   // Data.* : arbitrary
+  function default_jsonify(outer) {
+    //inner note,
+    return {
+      _id: { $oid: outer.note._id},//$oid is required by mongodb
+      type: "NOTE",
+      name: outer.note.name,
+      desc: outer.note.desc,
+      _priority_c: outer.note.data._priority_c,
+      _settings_c: outer.note.data._settings_c,
+      _jsonify_c: outer.note.data._jsonify_c,
+      _auto: outer.note.data._auto,
+    };
+  }
 
-  function construct_priorities(){
-    let priorities = [];
-    let errors = [];
-    let default_priority = ()=>1;
-    notes.forEach((note,i)=>{
-      let priority = default_priority;
-      try{
-        if(note.data._priority_c){
-          priority = eval(note.data._priority_c);
-        }
-      }catch(e){
-        console.error(e);
-        html_log(e);
-        errors.push(i);
+  function load_all_data() {
+    update_state({ display_notes: true },
+      function () {
+        db_request(
+          "find",
+          {},
+          function (response) {
+            let data = JSON.parse(response.data);
+            if (Object.keys(data).length !== 1) {
+              console.error("there isn't just the 'documents': ", data);
+              html_log("there isn't just the 'documents': " + JSON.stringify(data));
+            }
+            setNotes(
+              data.documents
+                .filter((note) => note.type === "NOTE")
+                .map((note) => {
+                  return { ...new_outer_shell(), note: note };
+                })
+            );
+            let date = new data.documents.filter((note) => note.type === "DATE")
+            if (date.length === 0) {
+              console.log("no date found, creating new one");
+              html_log("no date found, creating new one");
+              push_current_date();
+            }else{
+              date=new Date(date[0].date);
+              update_state({ last_db_update: date });
+            }
+          },
+          function (error) {
+            html_log(error, { display_notes: false });
+          }
+        )
+      });
+  }
+  // console.log(new Date(JSON.parse("{\"a\":\"2022-12-21T20:05:04.723Z\"}").a).getTime())
+  // console.log(new Date("2022-12-21T20:05:04.723Z").getTime());
+  function push_current_date() {
+    let curr_date = new Date();
+    db_request(
+      "replaceOne",
+      { filter: { type: "DATE" }, replacement: { type: "DATE", date: { $date: curr_date } }, upsert: true },
+      function (response) {
+        console.log("updated date");
+        // html_log("updated date");
+        update_state({ last_db_update: curr_date });
+      },
+      function (error) {
+        console.error("failed to update date", error);
+        html_log(["failed to update date, something is very wrong", error]);
+        //!not entirely sure what would happen, probably should be a fallback to a dump of the data
+        //!but i guess you can't protect against everything
       }
-      priorities.push(priority);
-    });
-    return [priorities,errors];
+    );
+    return curr_date;
   }
-  //adds/updates {key:[vals]} in data of each note, setNotes afterwards
-  function update_datakeys_notes(keymap){
-    //no sanity checks for length of each key array
+  
+
+  function get_last_db_update_date() {
+    db_request(
+      "findOne",
+      { filter: { type: "DATE" } },
+      function (response) {
+        let data = JSON.parse(response.data).document;
+        if(!(data)){
+          console.error("no date found, creating new one");
+          html_log("no date found, creating new one");
+          return push_current_date();
+        }
+        let date = new Date(data.date);
+        console.log("loaded date (" + typeof date + "):", date);
+        return date;
+      },
+      function (error) {
+        console.error("failed to load date", error);
+        html_log(error);
+        return undefined;
+      }
+    );
+  }
+
+
+
+        
+  function save_all_data() {
+    let to_save = notes.map((x) => x.jsonify(x.note));
+    db_request(
+      "deleteMany",
+      { filter: { "_id": { "$in" : to_save.map((x) => x._id) } } },
+      function (response) {
+        db_request(
+          "insertMany",
+          { documents: to_save },
+          function (response) {
+            console.log("saved data");
+            // html_log("saved data");
+            update_state({ last_db_update: push_current_date() });
+          },
+          function (error) {
+            console.error("!!!!!!!failed to save data!!!!!!!", error);
+            html_log(["!!!!!!!failed to save data, something is *very* wrong!!!!!!!", error]);
+          }
+        );
+      },
+      function (error) {
+        console.error("!failed to delete old data!", error);
+        html_log(["!failed to delete old data, something is very wrong!", error]);
+      }
+    );
+  }
+  
+  function new_inner_note() {
+    return {
+      // _id: "", //cannot be set, must be received from database
+      type: "NOTE",
+      name: "",
+      desc: "",
+      data: {
+        _priority_c: "",
+        _settings_c: "",
+        _jsonify_c: "",
+        _auto: {},
+      },
+    };
+  }
+  function new_outer_shell() {
+    //! does not have inner note defined
+    return {
+      failed: false,
+      val: 1,
+      priority: () => 1,
+      settings: () => <></>,
+      jsonify: default_jsonify,
+    };
+  }
+  function new_note() {
+    let inner = new_inner_note();
+    let outer = new_outer_shell();
+    outer.note = inner;
+    return outer;
+  }
+
+  // console.log(new Date().toLocaleString())
+  // Outer:
+  // val : produced with priority(), sorting based on
+  // priority() : after evaluating _priority_c
+  // failed : true is used to make the progress bar red
+  // settings() : after transpiling and evaluating _settings_c
+  // jsonify() : after evaluating _jsonify_c
+  // note : *actual note data*
+  function construct_priority(note) {
+    let priority = () => 1;
+    let failed = false;
+    let err = null;
+    try {
+      if (note.data._priority_c && note.data._priority_c.trim()) {
+        priority = eval(note.data._priority_c);
+      }
+    } catch (e) {
+      failed = true;
+      err = e;
+    }
+    return [priority, failed, err];
+  }
+  function construct_all_priorities() {
     let new_notes = [];
-    for(let i=0;i<notes.length;i++){
-      let new_note = {...notes[i]};
-      
-
-
-
-
-  // const barlist = []
-  // Object.keys(window).forEach(function(key) {console.log(key);});
-  // console.log(Object.keys(this));
-
-  // Object.keys(this).forEach(function(key) {
-  //   try{
-  //     console.log(key);
-  //   }catch(e){
-  //     console.log(e);
-  //   }
-  // });
-  function f(){
-    html_log('hello world');
+    notes.forEach((note, i) => {
+      let [priority, failed, err] = construct_priority(note);
+      new_notes.push({ ...note, priority: priority });
+      if (failed) {
+        html_log("failed to construct priority for note " + i + ": " + err);
+      }
+    });
+    setNotes(new_notes);
   }
+  // re-evaluate priorities every second, and sort based on resulting values
+  // if a note's settings are being accessed, prevent update
+  //   simple "is used" check in update
+  // if a note's settings are being accessed while an update is happening, delay access until after update
+  //   detect "is updating" as true
+  //   immediately set "is used" to true
+  //   while(is_updating)
+  //     await new Promise(resolve => setTimeout(resolve,20))
+
+  function update_priority_val(outer) {
+    let val = 1;
+    let failed = false;
+    let err = null;
+    try {
+      val = outer.priority();
+    } catch (e) {
+      failed = true;
+      err = e;
+    }
+    return [val, failed, err];
+  }
+  function update_order() {
+    let new_notes = [];
+    let failed_notes = [];
+    notes.forEach((outer, i) => {
+      let [val, failed, err] = update_priority_val(outer);
+      new_notes.push({ ...outer, val: val, failed: failed });
+      if (failed) {
+        failed_notes.push(i);
+      }
+    });
+    if (failed_notes.length) {
+      html_log("failed to update priority for notes (names):" + failed_notes.map((x) => notes[x].note.name));
+    }
+    new_notes.sort((a, b) => b.val - a.val);
+    setNotes(new_notes);
+  }
+  function start_autoupdate() {
+    //autoupdate order every second
+    let interval = setInterval(() => {
+      if (_settings_open) {
+        return;
+      }
+      // update_state({is_updating: true});//!cannot actually use setState because it is async
+      _is_updating_data = true;
+      console.log("updating order");
+      console.time("update_order");
+      update_order();
+      console.timeEnd("update_order");
+      _is_updating_data = false;
+    }, 1000);
+    update_state({ autoupdate_interval: interval });
+    //automatically check for changes upstream every 10 seconds, if date upstream is ahead of local date, simply reload
+    let interval2 = setInterval(() => {
+      if (_settings_open) {
+        return;
+      }
+      console.log("checking for updates");
+      // console.time("check_for_updates");
+      console.error("not implemented");
+      // console.timeEnd("check_for_updates");
+    }, 10000);
+  }
+
+  function full_reload() {
+    load_all_data();
+    construct_all_priorities();
+    update_order();
+    start_autoupdate();
+  }
+  function rollback_to_input() {
+    save_all_data();
+    setNotes([]);
+    update_state({ display_notes: false });
+  }
+
+
+
+
+
+  function f() {
+    html_log("hello world");
+  }
+
   return (
-    <div className="App" style={state.transparent?{backgroundColor: 'transparent'}:{}}>
-      <div className="log_remainder" style={{flex: 1,overflowY: "scroll"}}>
-        {state.predefined ?
-          <Notes 
-            data={notes} 
-            func={f} 
+    <div className="App" style={state.transparent ? { backgroundColor: "transparent" } : {}}>
+      <div className="log_remainder" style={{ flex: 1, overflowY: "scroll" }}>
+        {state.display_notes ? (
+          <Notes
+            data={notes}
+            func={f}
             reset_func={() => {
               // setNotes([]);
               // load_all_data();
-              update_state({predefined: false});
+              update_state({ display_notes: false });
             }}
           />
-          :<ApiInfoInput 
+        ) : (
+          <ApiInfoInput
             onChange={(e, key) => {
               localStorage.setItem(key, e.target.value);
-              setState({...state, [key]: e.target.value});
+              setState({ ...state, [key]: e.target.value });
             }}
             apikey={state.apikey}
             appid={state.appid}
-            request={() =>{
+            request={() => {
               setNotes([]);
               load_all_data();
             }}
           />
-        }
+        )}
       </div>
-      <Log html_log_list={state.html_log_list} clear_func={() => setState({...state, html_log_list: []})} />
+      <Log html_log_list={state.html_log_list} clear_func={() => setState({ ...state, html_log_list: [] })} />
     </div>
     // </div>
   );
 }
 
-function ApiInfoInput({onChange, apikey, appid, request}){
-  return(
+function ApiInfoInput({ onChange, apikey, appid, request }) {
+  return (
     <div className="api_info_input">
       <p>
         ApiKey:
-        <input type="password" placeholder="apikey" value={apikey} onChange={(e) => onChange(e, 'apikey')} />
+        <input type="password" placeholder="apikey" value={apikey} onChange={(e) => onChange(e, "apikey")} />
       </p>
       <p>
         AppId:
-        <input type="password" placeholder="appid" value={appid} onChange={(e) => onChange(e, 'appid')} />
+        <input type="password" placeholder="appid" value={appid} onChange={(e) => onChange(e, "appid")} />
       </p>
       <button onClick={request}>request</button>
     </div>
-  )
+  );
 }
 
-
-function Notes({data, func, reset_func}){
+function Notes({ data, func, reset_func }) {
   if (data.length === 0) {
-    return (
-      <div className="notes">
-        Loading...
-      </div>
-    );
+    return <div className="notes">Loading...</div>;
   }
-  return(
+  return (
     <div className="notes">
       <button onClick={func}>func</button>
-      <br/>
+      <br />
       <button onClick={reset_func}>reset</button>
-      <br/>
-      {data.map((note, i) => <div key={i}>{JSON.stringify(note)}</div>)}
+      <br />
+      {data.map((note, i) => (
+        <div key={i}>{JSON.stringify(note)}</div>
+      ))}
 
       {/* {Array(20).fill().map((_,i) =>
         <p key={i}>
@@ -280,7 +513,7 @@ function Notes({data, func, reset_func}){
         </p>    
       )} */}
     </div>
-  )
+  );
 }
 
 // const Log= ({ html_log_list }) => {
@@ -318,55 +551,54 @@ function Log({ html_log_list, clear_func }) {
     // console.log("scrollHeight", loggerRef.current.scrollHeight);
     // Update the scroll_to_bottom state variable
     setScrollToBottom(isScrolledToBottom);
-  };//after a long battle of many words, chatgpt figured it out
+  }; //after a long battle of many words, chatgpt figured it out
   //"Clear" button in the top right corner of the logger
-  return (
-    html_log_list.length > 0 ?
+  return html_log_list.length > 0 ? (
     <div
       className="log"
       style={{
-        maxHeight: '20vh',
-        position: 'relative',
-        padding: '10px',
-        maxHeight: '20vh+5px',
-        outline: '1px solid red'}}
+        maxHeight: "20vh",
+        position: "relative",
+        padding: "10px",
+        maxHeight: "20vh+5px",
+        outline: "1px solid red",
+      }}
     >
-      <button onClick={clear_func} style={{position: 'absolute', top: 0, right: 10}}>Clear</button>
-      <div ref={loggerRef}
-      onScroll={handleScroll}
-      style={{overflow: 'auto', maxHeight: '20vh', height:'auto',}} 
-      className="log_scroll">
-      {html_log_list.map((x, i) => <div key={i}>{x}</div>)}
+      <button onClick={clear_func} style={{ position: "absolute", top: 0, right: 10 }}>
+        Clear
+      </button>
+      <div
+        ref={loggerRef}
+        onScroll={handleScroll}
+        style={{ overflow: "auto", maxHeight: "20vh", height: "auto" }}
+        className="log_scroll"
+      >
+        {html_log_list.map((x, i) => (
+          <div key={i}>{x}</div>
+        ))}
       </div>
     </div>
-    :
-    <div className ="log"/>
-    // <div
-    //   ref={loggerRef}
-    //   className="log"
-    //   style={{
-    //     maxHeight: '20vh',
-    //     overflow: 'auto',
-    //     height:'auto',
-    //     position: 'relative',
-    //     outline: html_log_list.length > 0 ? '1px solid red' : 'none' }}
-    //   onScroll={handleScroll}
-    // >
-    //   <button onClick={clear_func} style={{position: 'absolute', top: 0, right: 0}}>Clear</button>
-    //   {html_log_list.map((x, i) => <div key={i}>{x}</div>)}
-    // </div>
+  ) : (
+    <div className="log" />
   );
+  // <div
+  //   ref={loggerRef}
+  //   className="log"
+  //   style={{
+  //     maxHeight: '20vh',
+  //     overflow: 'auto',
+  //     height:'auto',
+  //     position: 'relative',
+  //     outline: html_log_list.length > 0 ? '1px solid red' : 'none' }}
+  //   onScroll={handleScroll}
+  // >
+  //   <button onClick={clear_func} style={{position: 'absolute', top: 0, right: 0}}>Clear</button>
+  //   {html_log_list.map((x, i) => <div key={i}>{x}</div>)}
+  // </div>
 }
-  // useEffect(() => {
-  //   // Set the height to 0 if there are no logs, and to 'auto' if there are logs
-  //   setHeight(html_log_list.length > 0 ? 'auto' : 0);
-  // }, [html_log_list]);
-
-
-
-
-
-
-
+// useEffect(() => {
+//   // Set the height to 0 if there are no logs, and to 'auto' if there are logs
+//   setHeight(html_log_list.length > 0 ? 'auto' : 0);
+// }, [html_log_list]);
 
 export default App;
