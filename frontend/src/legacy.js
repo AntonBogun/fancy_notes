@@ -32,3 +32,16 @@
     // 'apikey: ' + apikey, 'appid: ' + appid], {apikey: apikey, appid: appid});
     // console.log("found")
     // html_log("found local storage apikey and appid: " + apikey + ", " + appid);
+
+
+  //~ request_all_data
+        // if (Object.keys(data).length !== 1) {
+        //   throw "there isn't just the 'documents': " + JSON.stringify(data);
+        // }
+        // setNotes(
+        //   data.documents
+        //     .filter((note) => note.type === "NOTE")
+        //     .map((note) => {
+        //       return { ...new_outer_shell(), note: note };
+        //     })
+        // );

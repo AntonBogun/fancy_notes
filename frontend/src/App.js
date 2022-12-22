@@ -54,8 +54,8 @@ let _is_updating_data=false //=prevent settings from opening while updating
 let _settings_open=false //=prevent updates while settings are open
 
 function App() {
+  const [htmlLogList, setHtmlLogList] = useState([]);
   const [state, setState] = useState({
-    html_log_list: [],
     apikey: "",
     appid: "",
     transparent: false, //transparent background for use with wallpaper engine
@@ -64,37 +64,46 @@ function App() {
     autoupdate_interval: null //reference to interval for autoupdate
   });
   const [notes, setNotes] = useState([]);
-  function update_state(state_changes) {
-    setState({ ...state, ...state_changes });
-  }
+  // function updateState(state_changes) {
+  //   setState({ ...state, ...state_changes });
+  // }
   function html_log(obj, state_changes = {}) {
     //delete first element if more than 50 lines
-    if (!Array.isArray(obj)) {
-      if (state.html_log_list.length > 50) {
-        setState({ ...state, html_log_list: state.html_log_list.slice(1).concat(obj.toString()), ...state_changes });
-      } else {
-        setState({ ...state, html_log_list: state.html_log_list.concat(obj.toString()), ...state_changes });
-      }
-    } else {
-      if (state.html_log_list.length + obj.length > 50) {
-        setState({
-          ...state,
-          html_log_list: state.html_log_list.slice(obj.length).concat(obj.map((x) => x.toString())),
-          ...state_changes,
-        });
-      } else {
-        setState({
-          ...state,
-          html_log_list: state.html_log_list.concat(obj.map((x) => x.toString())),
-          ...state_changes,
-        });
-      }
-    }
+    // if (!Array.isArray(obj)) {
+    //   if (state.html_log_list.length > 50) {
+    //     // setState({ ...state, html_log_list: state.html_log_list.slice(1).concat(obj.toString()), ...state_changes });
+    //     setHtmlLogList((prev) => prev.slice(1).concat(obj.toString()));
+    //   } else {
+    //     // setState({ ...state, html_log_list: state.html_log_list.concat(obj.toString()), ...state_changes });
+    //     setHtmlLogList((prev) => prev.concat(obj.toString()));
+    //   }
+    // } else {
+    //   if (state.html_log_list.length + obj.length > 50) {
+    //     // setState({
+    //     //   ...state,
+    //     //   html_log_list: state.html_log_list.slice(obj.length).concat(obj.map((x) => x.toString())),
+    //     //   ...state_changes,
+    //     // });
+    //     setHtmlLogList((prev) => prev.slice(obj.length).concat(obj.map((x) => x.toString())));
+    //   } else {
+    //     // setState({
+    //     //   ...state,
+    //     //   html_log_list: state.html_log_list.concat(obj.map((x) => x.toString())),
+    //     //   ...state_changes,
+    //     // });
+    //     setHtmlLogList((prev) => prev.concat(obj.map((x) => x.toString())));
+    //   }
+    // }
+    setHtmlLogList((prev) => {
+      let new_list = Array.isArray(obj) ? prev.concat(obj.map((x) => x.toString())) : prev.concat(obj.toString());
+      return new_list.slice(-50);//keep only last 50 lines
+    });
   }
 
   //=load apikey and appid from web search string/local storage
   //=if success, immediately request the data and set display_notes to true
   useEffect(() => {
+    //=stateful
     if (window.location.search) {
       try {
         //split search string into dictionary, with = as key-value separator and & as key separator
@@ -115,18 +124,20 @@ function App() {
         //save to local storage
         localStorage.setItem("apikey", new_state["apikey"]);
         localStorage.setItem("appid", new_state["appid"]);
-        update_state(new_state, full_reload);//full reload only after setting local storage
+        //!NOT IMPLEMENTED
+        // update_state(new_state);//full reload only after setting local storage
       } catch (e) {
         console.log(e);
         html_log(e);
       }
     } else {
-      //!this is quite scary because localstorage does not get cleared even on cache clear
+      //~this is quite scary because localstorage does not get cleared even on cache clear
       let apikey = localStorage.getItem("apikey");
       let appid = localStorage.getItem("appid");
       if (apikey && apikey !== "undefined" && appid && appid !== "undefined") {
-        //!undefined is a string
-        update_state({ apikey: apikey, appid: appid}, full_reload);
+        //~undefined is a string
+        // update_state({ apikey: apikey, appid: appid}, full_reload);
+        //!NOT IMPLEMENTED
       } else {
         html_log("no apikey and appid found, please enter them manually");
       }
@@ -140,12 +151,13 @@ function App() {
   // }, [state.display_notes]);
 
   // get notes data from mongodb
-  function db_request(action, data, response, error) {
+  function db_request(local_state, action, data, response, error){
+    //=stateless
     axios
       .post("/cors_avoidance", data, {
         headers: {
-          apikey: state.apikey,
-          appid: state.appid,
+          apikey: local_state.apikey,
+          appid: local_state.appid,
           api_action: action,
         },
       })
@@ -171,6 +183,7 @@ function App() {
   // Data._auto : arbitrary, automatically included by _jsonify_c by default
   // Data.* : arbitrary
   function default_jsonify(outer) {
+    //=trivially stateless
     //inner note,
     return {
       _id: { $oid: outer.note._id},//$oid is required by mongodb
@@ -183,67 +196,67 @@ function App() {
       _auto: outer.note.data._auto,
     };
   }
-
-  function load_all_data() {
-    update_state({ display_notes: true },
-      function () {
-        db_request(
-          "find",
-          {},
-          function (response) {
-            let data = JSON.parse(response.data);
-            if (Object.keys(data).length !== 1) {
-              console.error("there isn't just the 'documents': ", data);
-              html_log("there isn't just the 'documents': " + JSON.stringify(data));
-            }
-            setNotes(
-              data.documents
-                .filter((note) => note.type === "NOTE")
-                .map((note) => {
-                  return { ...new_outer_shell(), note: note };
-                })
-            );
-            let date = new data.documents.filter((note) => note.type === "DATE")
-            if (date.length === 0) {
-              console.log("no date found, creating new one");
-              html_log("no date found, creating new one");
-              push_current_date();
-            }else{
-              date=new Date(date[0].date);
-              update_state({ last_db_update: date });
-            }
-          },
-          function (error) {
-            html_log(error, { display_notes: false });
-          }
-        )
-      });
+  function request_all_data(local_state) {
+    //=stateless, updates local, may update date, throws
+    db_request(
+      local_state,
+      "find",
+      {},
+      function (response) {
+        let data = JSON.parse(response.data);
+        let new_notes = data.documents.filter((note) => note.type === "NOTE").map((note) => {
+          return { ...new_outer_shell(), note: note };
+        });
+        let date = new data.documents.filter((note) => note.type === "DATE")
+        if (date.length === 0) {
+          console.log("no date found, creating new one");
+          html_log("no date found, creating new one");
+          let new_state=push_current_date(local_state);
+          return [new_state, new_notes, new_state.last_db_update]
+        }else{
+          new Date(date[0].date);
+          // update_state({ last_db_update: date });
+          return [new_notes,date]
+        }
+      },
+      function (error) {
+        // html_log(error, { display_notes: false });
+        console.error("failed to request notes")
+        html_log("failed to request notes")
+        throw error
+      }
+    )
   }
   // console.log(new Date(JSON.parse("{\"a\":\"2022-12-21T20:05:04.723Z\"}").a).getTime())
   // console.log(new Date("2022-12-21T20:05:04.723Z").getTime());
-  function push_current_date() {
+  //=stateless, updates date, throws
+  function push_current_date(local_state) {
     let curr_date = new Date();
     db_request(
+      local_state,
       "replaceOne",
       { filter: { type: "DATE" }, replacement: { type: "DATE", date: { $date: curr_date } }, upsert: true },
       function (response) {
         console.log("updated date");
         // html_log("updated date");
-        update_state({ last_db_update: curr_date });
+        // update_state({ last_db_update: curr_date });
+        local_state.last_db_update=curr_date;
+        return curr_date
       },
       function (error) {
-        console.error("failed to update date", error);
-        html_log(["failed to update date, something is very wrong", error]);
-        //!not entirely sure what would happen, probably should be a fallback to a dump of the data
-        //!but i guess you can't protect against everything
+        // console.error("failed to update date", error);
+        // html_log(["failed to update date, something is very wrong", error]);
+        console.error("failed to update date")
+        html_log("failed to update date")
+        throw error
       }
     );
-    return curr_date;
   }
   
-
-  function get_last_db_update_date() {
+  //=stateless, may update date, throws
+  function get_last_db_update_date(local_state) {
     db_request(
+      local_state,
       "findOne",
       { filter: { type: "DATE" } },
       function (response) {
@@ -251,7 +264,7 @@ function App() {
         if(!(data)){
           console.error("no date found, creating new one");
           html_log("no date found, creating new one");
-          return push_current_date();
+          return push_current_date(local_state);
         }
         let date = new Date(data.date);
         console.log("loaded date (" + typeof date + "):", date);
