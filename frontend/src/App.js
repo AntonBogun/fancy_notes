@@ -50,8 +50,8 @@ window.mobileCheck = function () {
 function reload() {
   window.location.reload();
 }
-let _is_updating_data=false //=prevent settings from opening while updating
-let _settings_open=false //=prevent updates while settings are open
+let _is_updating_data = false; //=prevent settings from opening while updating
+let _settings_open = false; //=prevent updates while settings are open
 
 function App() {
   const [htmlLogList, setHtmlLogList] = useState([]);
@@ -61,7 +61,11 @@ function App() {
     transparent: false, //transparent background for use with wallpaper engine
     display_notes: false, //go to api input if false
     last_db_update: null, //used for detecting change by other instances
-    autoupdate_interval: null //reference to interval for autoupdate
+    allow_intervals: false, //allow intervals to run, false until notes loaded
+  });
+  const [updateIntervals, setUpdateIntervals] = useState({
+    sort: null, //reference to interval for automatic sorting
+    db_check: null //reference to interval for checking if db has been updated
   });
   const [notes, setNotes] = useState([]);
   // function updateState(state_changes) {
@@ -96,7 +100,7 @@ function App() {
     // }
     setHtmlLogList((prev) => {
       let new_list = Array.isArray(obj) ? prev.concat(obj.map((x) => x.toString())) : prev.concat(obj.toString());
-      return new_list.slice(-50);//keep only last 50 lines
+      return new_list.slice(-50); //keep only last 50 lines
     });
   }
 
@@ -151,18 +155,15 @@ function App() {
   // }, [state.display_notes]);
 
   // get notes data from mongodb
-  function db_request(local_state, action, data, response, error){
+  async function db_request(local_state, action, data) {
     //=stateless
-    axios
-      .post("/cors_avoidance", data, {
-        headers: {
-          apikey: local_state.apikey,
-          appid: local_state.appid,
-          api_action: action,
-        },
-      })
-      .then(response)
-      .catch(error);
+    return axios.post("/cors_avoidance", data, {
+      headers: {
+        apikey: local_state.apikey,
+        appid: local_state.appid,
+        api_action: action,
+      },
+    });
   }
   // note structure:
   // {(outer)*not saved*,
@@ -186,7 +187,7 @@ function App() {
     //=trivially stateless
     //inner note,
     return {
-      _id: { $oid: outer.note._id},//$oid is required by mongodb
+      _id: { $oid: outer.note._id }, //$oid is required by mongodb
       type: "NOTE",
       name: outer.note.name,
       desc: outer.note.desc,
@@ -196,119 +197,96 @@ function App() {
       _auto: outer.note.data._auto,
     };
   }
-  function request_all_data(local_state) {
-    //=stateless, updates local, may update date, throws
-    db_request(
-      local_state,
-      "find",
-      {},
-      function (response) {
-        let data = JSON.parse(response.data);
-        let new_notes = data.documents.filter((note) => note.type === "NOTE").map((note) => {
-          return { ...new_outer_shell(), note: note };
+  async function request_all_data(local_state) {
+    //=stateless, *mutates* state, may push date, throws
+    try {
+      let response = await db_request(local_state, "find", {});
+      let data = JSON.parse(response.data);
+      let new_notes = data.documents
+        .filter((note) => note.type === "NOTE")
+        .map((note) => {
+          return new_outer_shell(note);
         });
-        let date = new data.documents.filter((note) => note.type === "DATE")
-        if (date.length === 0) {
-          console.log("no date found, creating new one");
-          html_log("no date found, creating new one");
-          let new_state=push_current_date(local_state);
-          return [new_state, new_notes, new_state.last_db_update]
-        }else{
-          new Date(date[0].date);
-          // update_state({ last_db_update: date });
-          return [new_notes,date]
-        }
-      },
-      function (error) {
-        // html_log(error, { display_notes: false });
-        console.error("failed to request notes")
-        html_log("failed to request notes")
-        throw error
+      let date = new data.documents.filter((note) => note.type === "DATE");
+      if (date.length === 0) {
+        console.log("no date found, creating new one");
+        html_log("no date found, creating new one");
+        let new_state = await push_current_date(local_state);
+        return [new_state, new_notes];
+      } else {
+        local_state.last_db_update = date[0].date;
+        return [local_state, new_notes];//_do not need to return date, because request_all_data is supposed to update it
       }
-    )
+    } catch (error) {
+      console.error("failed to request notes");
+      html_log("failed to request notes");
+      throw error;
+    }
   }
   // console.log(new Date(JSON.parse("{\"a\":\"2022-12-21T20:05:04.723Z\"}").a).getTime())
   // console.log(new Date("2022-12-21T20:05:04.723Z").getTime());
-  //=stateless, updates date, throws
-  function push_current_date(local_state) {
+  async function push_current_date(local_state) {
+    //=stateless, *mutates* state, pushes date, throws
     let curr_date = new Date();
-    db_request(
-      local_state,
-      "replaceOne",
-      { filter: { type: "DATE" }, replacement: { type: "DATE", date: { $date: curr_date } }, upsert: true },
-      function (response) {
-        console.log("updated date");
-        // html_log("updated date");
-        // update_state({ last_db_update: curr_date });
-        local_state.last_db_update=curr_date;
-        return curr_date
-      },
-      function (error) {
-        // console.error("failed to update date", error);
-        // html_log(["failed to update date, something is very wrong", error]);
-        console.error("failed to update date")
-        html_log("failed to update date")
-        throw error
-      }
-    );
-  }
-  
-  //=stateless, may update date, throws
-  function get_last_db_update_date(local_state) {
-    db_request(
-      local_state,
-      "findOne",
-      { filter: { type: "DATE" } },
-      function (response) {
-        let data = JSON.parse(response.data).document;
-        if(!(data)){
-          console.error("no date found, creating new one");
-          html_log("no date found, creating new one");
-          return push_current_date(local_state);
-        }
-        let date = new Date(data.date);
-        console.log("loaded date (" + typeof date + "):", date);
-        return date;
-      },
-      function (error) {
-        console.error("failed to load date", error);
-        html_log(error);
-        return undefined;
-      }
-    );
+    try {
+      let response = await db_request(local_state, "replaceOne", {
+        filter: { type: "DATE" },
+        replacement: { type: "DATE", date: { $date: curr_date } },
+        upsert: true,
+      });
+      console.log("updated date");
+      local_state.last_db_update = curr_date;
+      return local_state;
+    } catch (error) {
+      console.error("failed to update date");
+      html_log("failed to update date");
+      throw error;
+    }
   }
 
-
-
-        
-  function save_all_data() {
-    let to_save = notes.map((x) => x.jsonify(x.note));
-    db_request(
-      "deleteMany",
-      { filter: { "_id": { "$in" : to_save.map((x) => x._id) } } },
-      function (response) {
-        db_request(
-          "insertMany",
-          { documents: to_save },
-          function (response) {
-            console.log("saved data");
-            // html_log("saved data");
-            update_state({ last_db_update: push_current_date() });
-          },
-          function (error) {
-            console.error("!!!!!!!failed to save data!!!!!!!", error);
-            html_log(["!!!!!!!failed to save data, something is *very* wrong!!!!!!!", error]);
-          }
-        );
-      },
-      function (error) {
-        console.error("!failed to delete old data!", error);
-        html_log(["!failed to delete old data, something is very wrong!", error]);
+  async function get_last_db_update_date(local_state) {
+    //=stateless, *mutates* state, may push date, throws
+    try{
+      let response = await db_request(local_state, "findOne", { filter: { type: "DATE" } });
+      let data = JSON.parse(response.data).document;
+      if (!data) {
+        console.error("no date found, creating new one");
+        html_log("no date found, creating new one");
+        local_state=await push_current_date(local_state);
+        return [local_state, local_state.last_db_update];
       }
-    );
+      return [local_state, new Date(data.date)];
+    }catch(error){
+      console.error("failed to get last db update date");
+      html_log("failed to get last db update date");
+      throw error;
+    }
   }
-  
+
+  async function save_all_data(local_state, local_notes) {
+    //=stateless, *mutates* state, pushes notes and date, throws
+    let to_save = local_notes.map((outer) => outer.jsonify(outer.note));
+    try {
+      await db_request(local_state, "deleteMany", { filter: { _id: { $in: to_save.map((x) => x._id) } } });
+      try {
+        await db_request(local_state, "insertMany", { documents: to_save });
+        console.log("saved data");
+        // html_log("saved data");
+        return push_current_date(local_state);
+      } catch (error) {
+        console.error("!!!!!!!failed to save data!!!!!!!");
+        html_log("!!!!!!!failed to save data, something is *very* wrong!!!!!!!");
+        throw error;
+      }
+    } catch (error) {
+      console.error("!failed to delete old data!");
+      html_log("!failed to delete old data, something is very wrong!");
+      throw error;
+    }
+  }
+
   function new_inner_note() {
+    //=trivially stateless
     return {
       // _id: "", //cannot be set, must be received from database
       type: "NOTE",
@@ -322,21 +300,20 @@ function App() {
       },
     };
   }
-  function new_outer_shell() {
-    //! does not have inner note defined
+  function new_outer_shell(inner={}) {//~im sure an empty default note is fine, right?
+    //=trivially stateless
     return {
       failed: false,
       val: 1,
       priority: () => 1,
       settings: () => <></>,
       jsonify: default_jsonify,
+      note: inner
     };
   }
   function new_note() {
-    let inner = new_inner_note();
-    let outer = new_outer_shell();
-    outer.note = inner;
-    return outer;
+    //=trivially stateless
+    return new_outer_shell(new_inner_note());
   }
 
   // console.log(new Date().toLocaleString())
@@ -348,6 +325,7 @@ function App() {
   // jsonify() : after evaluating _jsonify_c
   // note : *actual note data*
   function construct_priority(note) {
+    //=stateless
     let priority = () => 1;
     let failed = false;
     let err = null;
@@ -355,22 +333,22 @@ function App() {
       if (note.data._priority_c && note.data._priority_c.trim()) {
         priority = eval(note.data._priority_c);
       }
-    } catch (e) {
+    } catch (error) {
       failed = true;
-      err = e;
+      err = error;
     }
     return [priority, failed, err];
   }
-  function construct_all_priorities() {
-    let new_notes = [];
-    notes.forEach((note, i) => {
-      let [priority, failed, err] = construct_priority(note);
-      new_notes.push({ ...note, priority: priority });
+  function construct_all_priorities(local_notes) {
+    //=stateless
+    return local_notes.map((note, i) => {
+      let [priority, failed, err] = construct_priority(note.note);
       if (failed) {
+        console.error("failed to construct priority for note " + i + ": ",err);
         html_log("failed to construct priority for note " + i + ": " + err);
       }
+      return { ...note, priority: priority, failed: failed };
     });
-    setNotes(new_notes);
   }
   // re-evaluate priorities every second, and sort based on resulting values
   // if a note's settings are being accessed, prevent update
@@ -382,6 +360,7 @@ function App() {
   //     await new Promise(resolve => setTimeout(resolve,20))
 
   function update_priority_val(outer) {
+    //=stateless
     let val = 1;
     let failed = false;
     let err = null;
@@ -393,39 +372,38 @@ function App() {
     }
     return [val, failed, err];
   }
-  function update_order() {
-    let new_notes = [];
-    let failed_notes = [];
-    notes.forEach((outer, i) => {
+  function update_order(local_notes) {
+    //=stateless
+    let new_notes = local_notes.map((outer, i) => {
       let [val, failed, err] = update_priority_val(outer);
-      new_notes.push({ ...outer, val: val, failed: failed });
       if (failed) {
-        failed_notes.push(i);
+        console.error("failed to update priority for note " + i + ": ",err);
+        html_log("failed to update priority for note " + i + ": " + err);
       }
-    });
-    if (failed_notes.length) {
-      html_log("failed to update priority for notes (names):" + failed_notes.map((x) => notes[x].note.name));
-    }
-    new_notes.sort((a, b) => b.val - a.val);
-    setNotes(new_notes);
+      return { ...outer, val: val, failed: failed };
+    }).sort((a, b) => b.val - a.val);
+    return new_notes;
   }
+
   function start_autoupdate() {
+    //=stateful
+    //~NOTE: launches the two intervals immediately, meaning update_order and db_check shouldn't be pre-emptively called
     //autoupdate order every second
-    let interval = setInterval(() => {
+    let sort = setInterval(() => {
+      _is_updating_data = true;
       if (_settings_open) {
+        _is_updating_data = false;
         return;
       }
       // update_state({is_updating: true});//!cannot actually use setState because it is async
-      _is_updating_data = true;
       console.log("updating order");
       console.time("update_order");
-      update_order();
+      setNotes(update_order(notes));
       console.timeEnd("update_order");
       _is_updating_data = false;
     }, 1000);
-    update_state({ autoupdate_interval: interval });
-    //automatically check for changes upstream every 10 seconds, if date upstream is ahead of local date, simply reload
-    let interval2 = setInterval(() => {
+    //automatically check for changes upstream every 15 seconds, if date upstream is ahead of local date, ask for a reload
+    let db_check = setInterval(() => {
       if (_settings_open) {
         return;
       }
@@ -433,13 +411,20 @@ function App() {
       // console.time("check_for_updates");
       console.error("not implemented");
       // console.timeEnd("check_for_updates");
-    }, 10000);
+    }, 15000);
+    setUpdateIntervals({ sort, db_check });
   }
 
-  function full_reload() {
-    load_all_data();
-    construct_all_priorities();
-    update_order();
+
+  async function full_reload() {
+    //=stateful
+    let local_state = { ...state };
+    let new_notes=[];
+    // request_all_data()
+    // construct_all_priorities();
+    [local_state, new_notes] = await request_all_data(local_state);
+    new_notes = construct_all_priorities(new_notes);
+    // update_order(); //automatic in start_autoupdate
     start_autoupdate();
   }
   function rollback_to_input() {
@@ -447,10 +432,6 @@ function App() {
     setNotes([]);
     update_state({ display_notes: false });
   }
-
-
-
-
 
   function f() {
     html_log("hello world");
