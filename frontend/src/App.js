@@ -50,8 +50,12 @@ window.mobileCheck = function () {
 function reload() {
   window.location.reload();
 }
-let _is_updating_data = false; //=prevent settings from opening while updating
-let _settings_open = false; //=prevent updates while settings are open
+// let _is_updating_data = false; //=prevent settings from opening while updating
+// let _settings_open = false; //=prevent updates while settings are open
+// ~assuming that timeout can simply be cleared, therefore "mutexes" are not needed
+let _sort_timeout_id = 0;
+let _db_check_timeout_id = 0;
+let _db_cancel_token = null;
 
 function App() {
   const [htmlLogList, setHtmlLogList] = useState([]);
@@ -59,45 +63,21 @@ function App() {
     apikey: "",
     appid: "",
     transparent: false, //transparent background for use with wallpaper engine
-    display_notes: false, //go to api input if false
-    last_db_update: null, //used for detecting change by other instances
+    // display_notes: false, //go to api input if false
+    last_db_update_date: null, //used for detecting change by other instances
     allow_intervals: false, //allow intervals to run, false until notes loaded
   });
-  const [updateIntervals, setUpdateIntervals] = useState({
-    sort: null, //reference to interval for automatic sorting
-    db_check: null //reference to interval for checking if db has been updated
-  });
+  const [displayNotes, setDisplayNotes] = useState(false);
+  // const [updateIntervals, setUpdateIntervals] = useState({
+  //   sort: null, //reference to interval for automatic sorting
+  //   db_check: null //reference to interval for checking if db has been updated
+  // });
   const [notes, setNotes] = useState([]);
   // function updateState(state_changes) {
   //   setState({ ...state, ...state_changes });
   // }
   function html_log(obj, state_changes = {}) {
     //delete first element if more than 50 lines
-    // if (!Array.isArray(obj)) {
-    //   if (state.html_log_list.length > 50) {
-    //     // setState({ ...state, html_log_list: state.html_log_list.slice(1).concat(obj.toString()), ...state_changes });
-    //     setHtmlLogList((prev) => prev.slice(1).concat(obj.toString()));
-    //   } else {
-    //     // setState({ ...state, html_log_list: state.html_log_list.concat(obj.toString()), ...state_changes });
-    //     setHtmlLogList((prev) => prev.concat(obj.toString()));
-    //   }
-    // } else {
-    //   if (state.html_log_list.length + obj.length > 50) {
-    //     // setState({
-    //     //   ...state,
-    //     //   html_log_list: state.html_log_list.slice(obj.length).concat(obj.map((x) => x.toString())),
-    //     //   ...state_changes,
-    //     // });
-    //     setHtmlLogList((prev) => prev.slice(obj.length).concat(obj.map((x) => x.toString())));
-    //   } else {
-    //     // setState({
-    //     //   ...state,
-    //     //   html_log_list: state.html_log_list.concat(obj.map((x) => x.toString())),
-    //     //   ...state_changes,
-    //     // });
-    //     setHtmlLogList((prev) => prev.concat(obj.map((x) => x.toString())));
-    //   }
-    // }
     setHtmlLogList((prev) => {
       let new_list = Array.isArray(obj) ? prev.concat(obj.map((x) => x.toString())) : prev.concat(obj.toString());
       return new_list.slice(-50); //keep only last 50 lines
@@ -108,6 +88,7 @@ function App() {
   //=if success, immediately request the data and set display_notes to true
   useEffect(() => {
     //=stateful
+    let local_state = {...state};
     if (window.location.search) {
       try {
         //split search string into dictionary, with = as key-value separator and & as key separator
@@ -116,35 +97,38 @@ function App() {
           .slice(1)
           .split("&")
           .forEach((x) => (search_dict[x.split("=")[0]] = x.split("=")[1]));
-        let new_state = { display_notes: true };
+        // let new_state = { display_notes: true };
+        let new_state = {...state};
         let upd = (key, newkey) => {
           if (search_dict[key]) new_state[newkey] = search_dict[key];
         };
         upd("apikey", "apikey");
         upd("appid", "appid");
         upd("t", "transparent");
-        if (!(new_state["apikey"] && new_state["appid"])) throw "apikey and appid must be specified";
-        if (!new_state["transparent"]) new_state["transparent"] = false;
-        //save to local storage
-        localStorage.setItem("apikey", new_state["apikey"]);
-        localStorage.setItem("appid", new_state["appid"]);
-        //!NOT IMPLEMENTED
-        // update_state(new_state);//full reload only after setting local storage
+        if(new_state["transparent"]) local_state["transparent"]=true;
+        if (new_state["apikey"] && new_state["appid"]){
+          //save to local storage
+          localStorage.setItem("apikey", new_state["apikey"]);
+          localStorage.setItem("appid", new_state["appid"]);
+          full_reload(new_state);
+          return;
+        }else{
+          console.log("no apikey and appid found, rolling back to local storage");
+        }
       } catch (e) {
         console.log(e);
         html_log(e);
       }
+    }
+    //~this is quite scary because localstorage does not get cleared even on cache clear
+    let apikey = localStorage.getItem("apikey");
+    let appid = localStorage.getItem("appid");
+    if (apikey && apikey !== "undefined" && appid && appid !== "undefined") {
+      //~undefined is a string
+      let local_state={...state, apikey, appid};
+      full_reload(local_state);
     } else {
-      //~this is quite scary because localstorage does not get cleared even on cache clear
-      let apikey = localStorage.getItem("apikey");
-      let appid = localStorage.getItem("appid");
-      if (apikey && apikey !== "undefined" && appid && appid !== "undefined") {
-        //~undefined is a string
-        // update_state({ apikey: apikey, appid: appid}, full_reload);
-        //!NOT IMPLEMENTED
-      } else {
-        html_log("no apikey and appid found, please enter them manually");
-      }
+      html_log("no apikey and appid found, please enter them manually");
     }
   }, [window.location.search]);
 
@@ -155,7 +139,7 @@ function App() {
   // }, [state.display_notes]);
 
   // get notes data from mongodb
-  async function db_request(local_state, action, data) {
+  async function db_request(local_state, action, data, cancel_token=null) {
     //=stateless
     return axios.post("/cors_avoidance", data, {
       headers: {
@@ -163,6 +147,7 @@ function App() {
         appid: local_state.appid,
         api_action: action,
       },
+      cancelToken: cancel_token?cancel_token.token:null
     });
   }
   // note structure:
@@ -197,25 +182,25 @@ function App() {
       _auto: outer.note.data._auto,
     };
   }
-  async function request_all_data(local_state) {
+  async function request_all_data(local_state, cancel_token=null) {
     //=stateless, *mutates* state, may push date, throws
     try {
-      let response = await db_request(local_state, "find", {});
+      let response = await db_request(local_state, "find", {}, cancel_token);
       let data = JSON.parse(response.data);
       let new_notes = data.documents
         .filter((note) => note.type === "NOTE")
         .map((note) => {
           return new_outer_shell(note);
         });
-      let date = new data.documents.filter((note) => note.type === "DATE");
+      let date = data.documents.filter((note) => note.type === "DATE");
       if (date.length === 0) {
         console.log("no date found, creating new one");
         html_log("no date found, creating new one");
-        let new_state = await push_current_date(local_state);
+        let new_state = await push_current_date(local_state, cancel_token);
         return [new_state, new_notes];
       } else {
-        local_state.last_db_update = date[0].date;
-        return [local_state, new_notes];//_do not need to return date, because request_all_data is supposed to update it
+        local_state.last_db_update_date = date[0].date;
+        return [local_state, new_notes]; //_do not need to return date, because request_all_data is supposed to update it
       }
     } catch (error) {
       console.error("failed to request notes");
@@ -235,7 +220,7 @@ function App() {
         upsert: true,
       });
       console.log("updated date");
-      local_state.last_db_update = curr_date;
+      local_state.last_db_update_date = curr_date;
       return local_state;
     } catch (error) {
       console.error("failed to update date");
@@ -244,19 +229,24 @@ function App() {
     }
   }
 
-  async function get_last_db_update_date(local_state) {
+  async function get_last_db_update_date(local_state, cancel_token=null) {
     //=stateless, *mutates* state, may push date, throws
-    try{
-      let response = await db_request(local_state, "findOne", { filter: { type: "DATE" } });
+    try {
+      console.log("getting last db update date");
+      console.log(local_state, "findOne", { filter: { type: "DATE" } }, cancel_token);
+      let response = await db_request(local_state, "findOne", { filter: { type: "DATE" } }, cancel_token);
+      console.log("got last db update date");
+      console.log(response.data);
       let data = JSON.parse(response.data).document;
+      console.log(data);
       if (!data) {
         console.error("no date found, creating new one");
         html_log("no date found, creating new one");
-        local_state=await push_current_date(local_state);
-        return [local_state, local_state.last_db_update];
+        local_state = await push_current_date(local_state, cancel_token);
+        return [local_state, local_state.last_db_update_date];
       }
       return [local_state, new Date(data.date)];
-    }catch(error){
+    } catch (error) {
       console.error("failed to get last db update date");
       html_log("failed to get last db update date");
       throw error;
@@ -300,15 +290,16 @@ function App() {
       },
     };
   }
-  function new_outer_shell(inner={}) {//~im sure an empty default note is fine, right?
+  function new_outer_shell(inner = {}) {
+    //~im sure an empty default note is fine, right?
     //=trivially stateless
     return {
       failed: false,
-      val: 1,
-      priority: () => 1,
+      val: 100,
+      priority: () => 100,
       settings: () => <></>,
       jsonify: default_jsonify,
-      note: inner
+      note: inner,
     };
   }
   function new_note() {
@@ -326,7 +317,7 @@ function App() {
   // note : *actual note data*
   function construct_priority(note) {
     //=stateless
-    let priority = () => 1;
+    let priority = () => 100;
     let failed = false;
     let err = null;
     try {
@@ -344,7 +335,7 @@ function App() {
     return local_notes.map((note, i) => {
       let [priority, failed, err] = construct_priority(note.note);
       if (failed) {
-        console.error("failed to construct priority for note " + i + ": ",err);
+        console.error("failed to construct priority for note " + i + ": ", err);
         html_log("failed to construct priority for note " + i + ": " + err);
       }
       return { ...note, priority: priority, failed: failed };
@@ -361,7 +352,7 @@ function App() {
 
   function update_priority_val(outer) {
     //=stateless
-    let val = 1;
+    let val = 100;
     let failed = false;
     let err = null;
     try {
@@ -374,63 +365,122 @@ function App() {
   }
   function update_order(local_notes) {
     //=stateless
-    let new_notes = local_notes.map((outer, i) => {
-      let [val, failed, err] = update_priority_val(outer);
-      if (failed) {
-        console.error("failed to update priority for note " + i + ": ",err);
-        html_log("failed to update priority for note " + i + ": " + err);
-      }
-      return { ...outer, val: val, failed: failed };
-    }).sort((a, b) => b.val - a.val);
+    let new_notes = local_notes
+      .map((outer, i) => {
+        let [val, failed, err] = update_priority_val(outer);
+        //=clamp
+        val = Math.max(0, Math.min(100, val));
+        if (failed) {
+          console.error("failed to update priority for note " + i + ": ", err);
+          html_log("failed to update priority for note " + i + ": " + err);
+        }
+        return { ...outer, val: val, failed: failed };
+      })
+      .sort((a, b) => b.val - a.val);
     return new_notes;
   }
 
   function start_autoupdate() {
-    //=stateful
-    //~NOTE: launches the two intervals immediately, meaning update_order and db_check shouldn't be pre-emptively called
+    // // ~NOTE: launches the two intervals immediately, meaning update_order and db_check shouldn't be pre-emptively called
+    // ~the launch of intervals is not immediate
     //autoupdate order every second
-    let sort = setInterval(() => {
-      _is_updating_data = true;
-      if (_settings_open) {
-        _is_updating_data = false;
-        return;
-      }
-      // update_state({is_updating: true});//!cannot actually use setState because it is async
-      console.log("updating order");
-      console.time("update_order");
-      setNotes(update_order(notes));
-      console.timeEnd("update_order");
-      _is_updating_data = false;
-    }, 1000);
-    //automatically check for changes upstream every 15 seconds, if date upstream is ahead of local date, ask for a reload
-    let db_check = setInterval(() => {
-      if (_settings_open) {
-        return;
-      }
-      console.log("checking for updates");
-      // console.time("check_for_updates");
-      console.error("not implemented");
-      // console.timeEnd("check_for_updates");
-    }, 15000);
-    setUpdateIntervals({ sort, db_check });
+    function sort_interval() {
+      _sort_timeout_id = setTimeout(() => {
+        console.log("sorting");
+        console.time("sort");
+        setNotes((local_notes) => update_order(local_notes));
+        console.timeEnd("sort");
+        sort_interval();
+      }, 1000);
+    }
+    function db_check_interval() {
+      _db_check_timeout_id = setTimeout(() => {
+        console.log("checking for updates");
+        setState(async (original_state) => {
+          let local_state = { ...original_state };
+          try{
+            _db_cancel_token = axios.CancelToken.source();
+            let new_date = null;
+            console.log("before get_last_db_update_date");
+            [local_state, new_date] = await get_last_db_update_date(local_state, _db_cancel_token);
+            // let result = await get_last_db_update_date(local_state, _db_cancel_token);
+            // local_state = result[0];
+            // new_date = result[1];
+            // console.log(await get_last_db_update_date(local_state, _db_cancel_token))
+            console.log("after get_last_db_update_date")
+            if (new_date > local_state.last_db_update_date) {
+              console.log("upstream update found");
+              let new_notes = [];
+              console.log("before request_all_data")
+              [local_state, new_notes] = await request_all_data(local_state, _db_cancel_token);
+              console.log("after request_all_data")
+              _db_cancel_token = null;
+              new_notes = construct_all_priorities(new_notes);
+              new_notes = update_order(new_notes);
+              setNotes(new_notes);
+              console.log("setNotes");
+            }
+            db_check_interval();
+            console.log("completed", local_state);
+            return local_state;
+          }catch(error){
+            console.error("failed to check for updates");
+            html_log("failed to check for updates");
+            console.error(error);
+            html_log(error);
+            return original_state;
+          }
+        });
+      }, 5000);
+    }
+    // sort_interval();
+    db_check_interval();
   }
 
+  function stop_autoupdate() {
+    clearTimeout(_sort_timeout_id);
+    clearTimeout(_db_check_timeout_id);
+    if(_db_cancel_token){
+      _db_cancel_token.cancel();
+    }
+    _sort_timeout_id = 0;
+    _db_check_timeout_id = 0;
+    _db_cancel_token = null;
+  }
 
-  async function full_reload() {
-    //=stateful
-    let local_state = { ...state };
-    let new_notes=[];
+  async function full_reload(local_state) {
+    // =stateful, updates state and notes
+    // let local_state = { ...state };
+    let new_notes = [];
     // request_all_data()
     // construct_all_priorities();
-    [local_state, new_notes] = await request_all_data(local_state);
-    new_notes = construct_all_priorities(new_notes);
-    // update_order(); //automatic in start_autoupdate
-    start_autoupdate();
+    try {
+      setDisplayNotes(true);
+      [local_state, new_notes] = await request_all_data(local_state);
+      new_notes = construct_all_priorities(new_notes);
+      new_notes = update_order(new_notes);
+      setNotes(new_notes);
+      // local_state.display_notes = true;
+      // update_state({...local_state, display_notes: true});
+      setState(local_state);
+      start_autoupdate();
+    } catch (e) {
+      // setDisplayNotes(false);
+      console.error("failed to reload data, rolling back to input");
+      html_log("failed to reload data, rolling back to input");
+      console.error(e);
+      html_log(e);
+      rollback_to_input(local_state);
+    }
   }
-  function rollback_to_input() {
-    save_all_data();
+  function rollback_to_input(local_state) {
+    //=stateful, updates state and notes
+    setDisplayNotes(false);
+    stop_autoupdate();
     setNotes([]);
-    update_state({ display_notes: false });
+    // update_state({ display_notes: false });
+    // local_state.display_notes = false;
+    setState(local_state);
   }
 
   function f() {
@@ -440,14 +490,15 @@ function App() {
   return (
     <div className="App" style={state.transparent ? { backgroundColor: "transparent" } : {}}>
       <div className="log_remainder" style={{ flex: 1, overflowY: "scroll" }}>
-        {state.display_notes ? (
+        {displayNotes ? (
           <Notes
             data={notes}
             func={f}
-            reset_func={() => {
+            resetFunc={() => {
               // setNotes([]);
               // load_all_data();
-              update_state({ display_notes: false });
+              // update_state({ display_notes: false });
+              rollback_to_input(state);
             }}
           />
         ) : (
@@ -459,13 +510,14 @@ function App() {
             apikey={state.apikey}
             appid={state.appid}
             request={() => {
-              setNotes([]);
-              load_all_data();
+              // setNotes([]);
+              // load_all_data();
+              full_reload(state);
             }}
           />
         )}
       </div>
-      <Log html_log_list={state.html_log_list} clear_func={() => setState({ ...state, html_log_list: [] })} />
+      <Log htmlLogList={htmlLogList} clearFunc={() => setHtmlLogList([])} />
     </div>
     // </div>
   );
@@ -487,7 +539,7 @@ function ApiInfoInput({ onChange, apikey, appid, request }) {
   );
 }
 
-function Notes({ data, func, reset_func }) {
+function Notes({ data, func, resetFunc }) {
   if (data.length === 0) {
     return <div className="notes">Loading...</div>;
   }
@@ -495,10 +547,11 @@ function Notes({ data, func, reset_func }) {
     <div className="notes">
       <button onClick={func}>func</button>
       <br />
-      <button onClick={reset_func}>reset</button>
+      <button onClick={resetFunc}>reset</button>
       <br />
-      {data.map((note, i) => (
-        <div key={i}>{JSON.stringify(note)}</div>
+      {data.map((outer, i) => (
+        // <div key={i}>{JSON.stringify(note)}</div>
+        <Note key={i} data={outer} />
       ))}
 
       {/* {Array(20).fill().map((_,i) =>
@@ -510,17 +563,102 @@ function Notes({ data, func, reset_func }) {
   );
 }
 
-// const Log= ({ html_log_list }) => {
+//gradient = sorted array of [i,col] pairs where i is the position in the gradient
+function col_at_gradient(t, gradient) {
+  if (t <= gradient[0][0]) return gradient[0][1];
+  if (t >= gradient[gradient.length - 1][0]) return gradient[gradient.length - 1][1];
+  for (var i = 0; i < gradient.length - 1; i++) {
+    if (t == gradient[i + 1][0]) return gradient[i + 1][1];
+    if (t >= gradient[i][0] && t <= gradient[i + 1][0]) {
+      var t0 = gradient[i][0];
+      var t1 = gradient[i + 1][0];
+      var c0 = gradient[i][1];
+      var c1 = gradient[i + 1][1];
+      var c = [];
+      return c0.map((x, i) => x + ((c1[i] - x) * (t - t0)) / (t1 - t0));
+    }
+  }
+}
+function split_hex(hex) {
+  return [parseInt(hex.slice(1, 3), 16), parseInt(hex.slice(3, 5), 16), parseInt(hex.slice(5, 7), 16)];
+}
+function arr_to_rgb(arr) {
+  return `rgb(${arr[0]},${arr[1]},${arr[2]})`;
+}
+
+function Note({ data }) {
+  try {
+    return (
+      <div className="note" style={{ position: "relative", width: "100%", height: "40px", display: "flex", alignItems: "center"}} onClick={() => console.log(data)}>
+        {/* <ProgressBar
+          now={data.val}
+          variant={data.failed ? "danger" : "info"}
+          style={{ position: "absolute", top: "5%", left: 0, width: "100%", height: "90%", bg: "green" }}
+        /> */}
+        <div
+          className="progress"
+          style={{
+            position: "absolute",
+            top: "10%",
+            left: 0,
+            width: "100%",
+            height: "80%",
+            background: "#E9ECEF",
+            borderRadius: "12px",
+          }}
+        >
+          <div
+            className="bar"
+            style={{
+              width: `${Math.round(data.val)}%`,
+              background: arr_to_rgb(
+                col_at_gradient(Math.round(data.val), [
+                  [0, split_hex("#2cb7ff")],
+                  [22, split_hex("#2cb7ff")],
+                  [66, split_hex("#fff400")],
+                  [100, split_hex("#ff0000")],
+                ])
+              ),
+            }}
+          />
+        </div>
+        <div style={{ textAlign: "center", textOverflow: "ellipsis", zIndex:1, width: "100%"}}>
+        {`${Math.round(data.val)}% - ${data.note.name}`}
+        </div>
+        {/* <div
+          style={{
+            textAlign: "center",
+            textOverflow: "ellipsis",
+            lineHeight: "100%"
+          }}
+        >
+          {`${data.val}% - ${data.note.name}`}
+        </div> */}
+      </div>
+      //   test
+      // </ProgressBar>
+      // <div className="note">
+      //   {JSON.stringify(data)}
+      // </div>
+    );
+  } catch (e) {
+    console.error(e);
+    // html_log(e);//~not defined
+    return <ProgressBar now={100} variant="danger" label="error" />;
+  }
+}
+
+// const Log= ({ htmlLogList }) => {
 //   console.log("this", this);
 //   return (
 //     <div className="log">
 //       {/* <p> tag takes too much vertical space normally */}
-//       {html_log_list.map((x, i) => <div key={i}>{x}</div>)}
+//       {htmlLogList.map((x, i) => <div key={i}>{x}</div>)}
 //     </div>
 //   );
 // }
 
-function Log({ html_log_list, clear_func }) {
+function Log({ htmlLogList, clearFunc }) {
   const loggerRef = useRef(null);
   const [scroll_to_bottom, setScrollToBottom] = useState(true);
 
@@ -531,7 +669,7 @@ function Log({ html_log_list, clear_func }) {
         loggerRef.current.scrollTop = loggerRef.current.scrollHeight;
       }
     }
-  }, [html_log_list, scroll_to_bottom]);
+  }, [htmlLogList, scroll_to_bottom]);
 
   const handleScroll = () => {
     // Check if the logger is scrolled to the bottom
@@ -547,7 +685,7 @@ function Log({ html_log_list, clear_func }) {
     setScrollToBottom(isScrolledToBottom);
   }; //after a long battle of many words, chatgpt figured it out
   //"Clear" button in the top right corner of the logger
-  return html_log_list.length > 0 ? (
+  return htmlLogList.length > 0 ? (
     <div
       className="log"
       style={{
@@ -558,7 +696,7 @@ function Log({ html_log_list, clear_func }) {
         outline: "1px solid red",
       }}
     >
-      <button onClick={clear_func} style={{ position: "absolute", top: 0, right: 10 }}>
+      <button onClick={clearFunc} style={{ position: "absolute", top: 0, right: 10 }}>
         Clear
       </button>
       <div
@@ -567,7 +705,7 @@ function Log({ html_log_list, clear_func }) {
         style={{ overflow: "auto", maxHeight: "20vh", height: "auto" }}
         className="log_scroll"
       >
-        {html_log_list.map((x, i) => (
+        {htmlLogList.map((x, i) => (
           <div key={i}>{x}</div>
         ))}
       </div>
@@ -583,16 +721,18 @@ function Log({ html_log_list, clear_func }) {
   //     overflow: 'auto',
   //     height:'auto',
   //     position: 'relative',
-  //     outline: html_log_list.length > 0 ? '1px solid red' : 'none' }}
+  //     outline: htmlLogList.length > 0 ? '1px solid red' : 'none' }}
   //   onScroll={handleScroll}
   // >
-  //   <button onClick={clear_func} style={{position: 'absolute', top: 0, right: 0}}>Clear</button>
-  //   {html_log_list.map((x, i) => <div key={i}>{x}</div>)}
+  //   <button onClick={clearFunc} style={{position: 'absolute', top: 0, right: 0}}>Clear</button>
+  //   {htmlLogList.map((x, i) => <div key={i}>{x}</div>)}
   // </div>
 }
 // useEffect(() => {
 //   // Set the height to 0 if there are no logs, and to 'auto' if there are logs
-//   setHeight(html_log_list.length > 0 ? 'auto' : 0);
-// }, [html_log_list]);
+//   setHeight(htmlLogList.length > 0 ? 'auto' : 0);
+// }, [htmlLogList]);
 
 export default App;
+
+

@@ -47,3 +47,56 @@
         // );
   //~
           // return { ...new_outer_shell(), note: note };
+
+  //~ start autoupdate
+    // let sort = setInterval(() => {
+    //   // _is_updating_data = true;
+    //   // if (_settings_open) {
+    //   //   _is_updating_data = false;
+    //   //   return;
+    //   // }
+    //   // update_state({is_updating: true});//!cannot actually use setState because it is async
+    //   console.log("updating order");
+    //   console.time("update_order");
+    //   setNotes(update_order(notes));
+    //   console.timeEnd("update_order");
+    //   // _is_updating_data = false;
+    // }, 1000);
+    //automatically check for changes upstream every 15 seconds, if date upstream is ahead of local date, ask for a reload
+    // let db_check = setInterval(() => {
+    //   if (_settings_open) {
+    //     return;
+    //   }
+    //   console.log("checking for updates");
+    //   // console.time("check_for_updates");
+    //   console.error("not implemented");
+    //   // console.timeEnd("check_for_updates");
+    // }, 15000);
+    // setUpdateIntervals({ sort, db_check });
+  
+  //~ html_log
+    // if (!Array.isArray(obj)) {
+    //   if (state.html_log_list.length > 50) {
+    //     // setState({ ...state, html_log_list: state.html_log_list.slice(1).concat(obj.toString()), ...state_changes });
+    //     setHtmlLogList((prev) => prev.slice(1).concat(obj.toString()));
+    //   } else {
+    //     // setState({ ...state, html_log_list: state.html_log_list.concat(obj.toString()), ...state_changes });
+    //     setHtmlLogList((prev) => prev.concat(obj.toString()));
+    //   }
+    // } else {
+    //   if (state.html_log_list.length + obj.length > 50) {
+    //     // setState({
+    //     //   ...state,
+    //     //   html_log_list: state.html_log_list.slice(obj.length).concat(obj.map((x) => x.toString())),
+    //     //   ...state_changes,
+    //     // });
+    //     setHtmlLogList((prev) => prev.slice(obj.length).concat(obj.map((x) => x.toString())));
+    //   } else {
+    //     // setState({
+    //     //   ...state,
+    //     //   html_log_list: state.html_log_list.concat(obj.map((x) => x.toString())),
+    //     //   ...state_changes,
+    //     // });
+    //     setHtmlLogList((prev) => prev.concat(obj.map((x) => x.toString())));
+    //   }
+    // }
