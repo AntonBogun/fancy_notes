@@ -19,12 +19,12 @@ app.post('/cors_avoidance', jsonParser, (request, response) => {
     var config={headers: {'Content-Type': 'application/json', 'Access-Control-Request-Headers': '*', 'api-key': apikey}};
     axios.post(`https://data.mongodb-api.com/app/${appid}/endpoint/data/v1/action/${api_action}`,data,config)
     .then(function (response2) {
-    console.log(JSON.stringify(response2.data));
+    // console.log(JSON.stringify(response2.data));
     response.json(JSON.stringify(response2.data));
     })
     .catch(function (error) {
-    console.log(error.code)
-    console.log(error.data)
+    // console.log(error.code)
+    // console.log(error.data)
     response.json(JSON.stringify(error));
     });
 })

@@ -100,3 +100,55 @@
     //     setHtmlLogList((prev) => prev.concat(obj.map((x) => x.toString())));
     //   }
     // }
+
+  //~ request_all_data
+
+      // cancel_token=axios.CancelToken.source();
+      // let response = db_request(local_state, "find", {}, cancel_token);
+      // cancel_token.cancel();
+      // console.log("after")
+      // await response;
+
+
+      // console.log("cancel?",axios.isCancel(error));
+      // try{
+      //   await new Promise((resolve, reject) => {
+      //     reject(error)
+      //   });
+      // }catch(e){
+      //   console.log("cancel?",axios.isCancel(e));
+      // }
+
+  //~ db_check_interval
+    // function db_check_interval() {
+    //   _db_timeout_id = setTimeout(() => {
+    //     setState(async (original_state) => {
+    //       let local_state = { ...original_state };
+    //       try{
+    //         _db_cancel_token = axios.CancelToken.source();
+    //         let new_date = null;
+    //         [local_state, new_date] = await get_last_db_update_date(local_state, _db_cancel_token);
+    //         if (new_date > local_state.last_db_update_date) {
+    //           let new_notes = [];
+    //           [local_state, new_notes] = await request_all_data(local_state, _db_cancel_token);
+    //           _db_cancel_token = null;
+    //           new_notes = construct_all_priorities(new_notes);
+    //           new_notes = update_order(new_notes);
+    //           setNotes(new_notes);
+    //         }
+    //         db_check_interval();
+    //         return local_state;
+    //       }catch(error){
+    //         console.error("failed to check for updates");
+    //         html_log("failed to check for updates");
+    //         console.error(error);
+    //         html_log(error);
+    //         return original_state;
+    //       }
+    //     });
+    //   }, 5000);
+    // }
+
+  //~ just random stuff
+  // console.log(new Date(JSON.parse("{\"a\":\"2022-12-21T20:05:04.723Z\"}").a).getTime())
+  // console.log(new Date("2022-12-21T20:05:04.723Z").getTime());

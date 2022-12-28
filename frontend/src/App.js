@@ -54,8 +54,10 @@ function reload() {
 // let _settings_open = false; //=prevent updates while settings are open
 // ~assuming that timeout can simply be cleared, therefore "mutexes" are not needed
 let _sort_timeout_id = 0;
-let _db_check_timeout_id = 0;
-let _db_cancel_token = null;
+let _db_timeout_id = 0;//needed to cancel timeout
+let _db_cancel_token = null;//needed to cancel axios request
+let _db_resolve_func = null;
+let _db_reject_func = null;//needed to cancel promise
 
 function App() {
   const [htmlLogList, setHtmlLogList] = useState([]);
@@ -73,6 +75,7 @@ function App() {
   //   db_check: null //reference to interval for checking if db has been updated
   // });
   const [notes, setNotes] = useState([]);
+  const [dbInterval, setDBInterval] = useState(0);
   // function updateState(state_changes) {
   //   setState({ ...state, ...state_changes });
   // }
@@ -199,7 +202,7 @@ function App() {
         let new_state = await push_current_date(local_state, cancel_token);
         return [new_state, new_notes];
       } else {
-        local_state.last_db_update_date = date[0].date;
+        local_state.last_db_update_date = new Date(date[0].date);
         return [local_state, new_notes]; //_do not need to return date, because request_all_data is supposed to update it
       }
     } catch (error) {
@@ -208,9 +211,8 @@ function App() {
       throw error;
     }
   }
-  // console.log(new Date(JSON.parse("{\"a\":\"2022-12-21T20:05:04.723Z\"}").a).getTime())
-  // console.log(new Date("2022-12-21T20:05:04.723Z").getTime());
-  async function push_current_date(local_state) {
+
+  async function push_current_date(local_state, cancel_token=null) {
     //=stateless, *mutates* state, pushes date, throws
     let curr_date = new Date();
     try {
@@ -218,8 +220,8 @@ function App() {
         filter: { type: "DATE" },
         replacement: { type: "DATE", date: { $date: curr_date } },
         upsert: true,
-      });
-      console.log("updated date");
+      }, cancel_token);
+      console.log("updated date");//~not needed in production
       local_state.last_db_update_date = curr_date;
       return local_state;
     } catch (error) {
@@ -232,13 +234,10 @@ function App() {
   async function get_last_db_update_date(local_state, cancel_token=null) {
     //=stateless, *mutates* state, may push date, throws
     try {
-      console.log("getting last db update date");
-      console.log(local_state, "findOne", { filter: { type: "DATE" } }, cancel_token);
+      console.log("getting last db update date");//!debug
       let response = await db_request(local_state, "findOne", { filter: { type: "DATE" } }, cancel_token);
-      console.log("got last db update date");
-      console.log(response.data);
+      console.log("got last db update date");//!debug
       let data = JSON.parse(response.data).document;
-      console.log(data);
       if (!data) {
         console.error("no date found, creating new one");
         html_log("no date found, creating new one");
@@ -393,70 +392,92 @@ function App() {
         sort_interval();
       }, 1000);
     }
-    function db_check_interval() {
-      _db_check_timeout_id = setTimeout(() => {
-        console.log("checking for updates");
-        setState(async (original_state) => {
-          let local_state = { ...original_state };
-          try{
-            _db_cancel_token = axios.CancelToken.source();
-            let new_date = null;
-            console.log("before get_last_db_update_date");
-            [local_state, new_date] = await get_last_db_update_date(local_state, _db_cancel_token);
-            // let result = await get_last_db_update_date(local_state, _db_cancel_token);
-            // local_state = result[0];
-            // new_date = result[1];
-            // console.log(await get_last_db_update_date(local_state, _db_cancel_token))
-            console.log("after get_last_db_update_date")
-            if (new_date > local_state.last_db_update_date) {
-              console.log("upstream update found");
-              let new_notes = [];
-              console.log("before request_all_data")
-              [local_state, new_notes] = await request_all_data(local_state, _db_cancel_token);
-              console.log("after request_all_data")
-              _db_cancel_token = null;
-              new_notes = construct_all_priorities(new_notes);
-              new_notes = update_order(new_notes);
-              setNotes(new_notes);
-              console.log("setNotes");
-            }
-            db_check_interval();
-            console.log("completed", local_state);
-            return local_state;
-          }catch(error){
-            console.error("failed to check for updates");
-            html_log("failed to check for updates");
-            console.error(error);
-            html_log(error);
-            return original_state;
-          }
-        });
-      }, 5000);
+    
+    async function db_check_interval() {
+      //create promise
+      let promise = new Promise((resolve, reject) => {
+        _db_resolve_func = resolve;//allows to execute after async function that accesses state
+        _db_reject_func = reject;
+      });
+      setDBInterval((x) => x + 1);
+      console.log("updated db interval")//!debug
+      let start_new_interval = ()=>(_db_timeout_id=setTimeout(db_check_interval, 15000));
+      try{
+        console.log("waiting");//!debug
+        await promise;
+        start_new_interval();
+        console.log("launched new interval");//!debug
+      }catch(error){
+        if(axios.isCancel(error)){
+          console.log("db_check_interval canceled");
+          html_log("db_check_interval canceled");
+        }else{
+          console.error("failed to check for updates");
+          html_log("failed to check for updates");
+          console.error(error);
+          html_log(error);
+          // start_new_interval();
+        }
+      }
+      _db_resolve_func = null;
+      _db_reject_func = null;
     }
-    // sort_interval();
+    sort_interval();
     db_check_interval();
   }
+  useEffect(() => {
+    if (dbInterval > 0) {
+    console.log("db interval updated");//!debug
+    db_check_request(state);//retrieves the newest state
+    }
+  }, [dbInterval]);
+
+  async function db_check_request(original_state) {
+    let local_state = { ...original_state };
+    try {
+      _db_cancel_token = axios.CancelToken.source();
+      let new_date = null;
+      console.log("checking for updates");//!debug
+      [local_state, new_date] = await get_last_db_update_date(local_state, _db_cancel_token);
+      console.log("db update date: ", new_date);//!debug
+      console.log("local date: ", original_state.last_db_update_date);//!debug
+      console.log("new date > local date: ", new_date > original_state.last_db_update_date);//!debug
+      if (new_date > original_state.last_db_update_date) {
+        console.log("new updates found, stopped updates and reloading");//!debug
+        // stop_autoupdate();
+        await full_reload(local_state, _db_cancel_token);
+        _db_cancel_token = null;
+      }else{
+        _db_cancel_token = null;
+        _db_resolve_func();
+      }
+    } catch (error) {
+      _db_reject_func(error);
+    }
+  }
+      
+
+
 
   function stop_autoupdate() {
     clearTimeout(_sort_timeout_id);
-    clearTimeout(_db_check_timeout_id);
+    clearTimeout(_db_timeout_id);
     if(_db_cancel_token){
       _db_cancel_token.cancel();
+      _db_cancel_token = null;
     }
     _sort_timeout_id = 0;
-    _db_check_timeout_id = 0;
-    _db_cancel_token = null;
+    _db_timeout_id = 0;
   }
 
-  async function full_reload(local_state) {
+  async function full_reload(local_state, cancel_token=null) {
     // =stateful, updates state and notes
     // let local_state = { ...state };
+    stop_autoupdate();//~not sure if it's good to keep it here even if no auto-update is running, but probably is
     let new_notes = [];
-    // request_all_data()
-    // construct_all_priorities();
     try {
       setDisplayNotes(true);
-      [local_state, new_notes] = await request_all_data(local_state);
+      [local_state, new_notes] = await request_all_data(local_state, cancel_token);
       new_notes = construct_all_priorities(new_notes);
       new_notes = update_order(new_notes);
       setNotes(new_notes);
@@ -478,8 +499,6 @@ function App() {
     setDisplayNotes(false);
     stop_autoupdate();
     setNotes([]);
-    // update_state({ display_notes: false });
-    // local_state.display_notes = false;
     setState(local_state);
   }
 
@@ -512,6 +531,7 @@ function App() {
             request={() => {
               // setNotes([]);
               // load_all_data();
+              // stop_autoupdate();
               full_reload(state);
             }}
           />
