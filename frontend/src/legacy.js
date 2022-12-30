@@ -149,6 +149,101 @@
     //   }, 5000);
     // }
 
+  //~ note
+          {/* <ProgressBar
+          now={data.val}
+          variant={data.failed ? "danger" : "info"}
+          style={{ position: "absolute", top: "5%", left: 0, width: "100%", height: "90%", bg: "green" }}
+        /> */}
+
+      //   test
+      // </ProgressBar>
+      // <div className="note">
+      //   {JSON.stringify(data)}
+      // </div>
+      
+        {/* <div
+          style={{
+            textAlign: "center",
+            textOverflow: "ellipsis",
+            lineHeight: "100%"
+          }}
+        >
+          {`${data.val}% - ${data.note.name}`}
+        </div> */}
+
+
   //~ just random stuff
   // console.log(new Date(JSON.parse("{\"a\":\"2022-12-21T20:05:04.723Z\"}").a).getTime())
   // console.log(new Date("2022-12-21T20:05:04.723Z").getTime());
+
+  //~ db_check_interval
+      //create promise
+      // let promise = new Promise((resolve, reject) => {
+      //   _db_resolve_func = resolve; //allows to execute after async function that accesses state
+      //   _db_reject_func = reject;
+      // });
+      // setDBInterval((x) => x + 1);
+      // console.log("updated db interval"); //!debug
+      // let start_new_interval = () => (_db_timeout_id = setTimeout(db_check_interval, 15000));
+      // try {
+      //   console.log("waiting"); //!debug
+      //   await promise;
+      //   start_new_interval();
+      //   console.log("launched new interval"); //!debug
+      // } catch (error) {
+      //   if (axios.isCancel(error)) {
+      //     console.log("db_check_interval canceled");
+      //     html_log("db_check_interval canceled");
+      //   } else {
+      //     console.error("failed to check for updates");
+      //     html_log("failed to check for updates");
+      //     console.error(error);
+      //     html_log(error);
+      //     // start_new_interval();
+      //   }
+      // }
+      // _db_resolve_func = null;
+      // _db_reject_func = null;
+
+
+  //~ self explanatory
+  // resetFunc={() => {
+  //   if (_is_updating_data) {
+  //     html_log("Cannot reset while updating data");
+  //     return;
+  //   }
+  //   stop_autoupdate();
+  //   append_yes_no_popup_raw(
+  //     "Go back to selecting appid and apikey? This will erase all notes.",
+  //     "No",
+  //     () => {
+  //       pop_popup();
+  //       start_autoupdate();
+  //     },
+  //     "Yes",
+  //     () => {
+  //       append_yes_no_popup_raw(
+  //       "Are you definitely sure? For reall man??? like what the hell??",
+  //       "Yeah i changed my mind thanks",
+  //       () => {
+  //         pop_popup();
+  //       },
+  //       "Dance and fall",
+  //       () => {
+  //         append_yes_no_popup_raw(
+  //           "hamburger",
+  //           "no",
+  //           () => {
+  //             pop_popup();
+  //           },
+  //           "yes",
+  //           () => {
+  //             clear_popups();
+  //             rollback_to_input(state);
+  //           }
+  //         );
+  //       });
+  //     }
+  //   );  
+  // }}

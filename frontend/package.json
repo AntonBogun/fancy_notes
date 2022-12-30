@@ -4,9 +4,11 @@
   "private": true,
   "proxy": "http://localhost:3001",
   "dependencies": {
+    "@babel/standalone": "^7.20.11",
     "@testing-library/jest-dom": "^5.16.5",
     "@testing-library/react": "^13.4.0",
     "@testing-library/user-event": "^13.5.0",
+    "@uiw/react-textarea-code-editor": "^2.0.6",
     "axios": "^1.2.0",
     "bootstrap": "^5.2.3",
     "cors": "^2.8.5",

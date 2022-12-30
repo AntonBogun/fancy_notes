@@ -2,9 +2,17 @@ import logo from "./logo.svg";
 import "./App.css";
 import ProgressBar from "react-bootstrap/ProgressBar";
 import { useState, useEffect, useRef } from "react";
+import * as _React from "react";
 import axios from "axios";
-// const cors = require('cors')
-// app.use(cors())
+import CodeEditor from "@uiw/react-textarea-code-editor";
+// import { transform } from "@babel/standalone";
+function transform(code, options) {
+  return { code: "React.createElement('div', null, 'PLACEHOLDER')" };
+}
+function transpile(code) {
+  return transform(code, { plugins: ["transform-react-jsx"] }).code;
+}
+const React = _React; //React is not defined in eval
 
 window.mobileCheck = function () {
   let check = false;
@@ -50,14 +58,15 @@ window.mobileCheck = function () {
 function reload() {
   window.location.reload();
 }
-// let _is_updating_data = false; //=prevent settings from opening while updating
+let _is_updating_data = false; //=prevent settings from opening while updating
 // let _settings_open = false; //=prevent updates while settings are open
-// ~assuming that timeout can simply be cleared, therefore "mutexes" are not needed
+// // ~assuming that timeout can simply be cleared, therefore "mutexes" are not needed
+//~ the mutex is needed to prevent opening settings while data is being requested, but for sorting it is not needed
 let _sort_timeout_id = 0;
-let _db_timeout_id = 0;//needed to cancel timeout
-let _db_cancel_token = null;//needed to cancel axios request
+let _db_timeout_id = 0; //needed to cancel timeout
+let _db_cancel_token = null; //needed to cancel axios request
 let _db_resolve_func = null;
-let _db_reject_func = null;//needed to cancel promise
+let _db_reject_func = null; //needed to cancel promise
 
 function App() {
   const [htmlLogList, setHtmlLogList] = useState([]);
@@ -76,6 +85,7 @@ function App() {
   // });
   const [notes, setNotes] = useState([]);
   const [dbInterval, setDBInterval] = useState(0);
+  const [popupStack, setPopupStack] = useState([]);
   // function updateState(state_changes) {
   //   setState({ ...state, ...state_changes });
   // }
@@ -91,7 +101,7 @@ function App() {
   //=if success, immediately request the data and set display_notes to true
   useEffect(() => {
     //=stateful
-    let local_state = {...state};
+    let local_state = { ...state };
     if (window.location.search) {
       try {
         //split search string into dictionary, with = as key-value separator and & as key separator
@@ -101,21 +111,21 @@ function App() {
           .split("&")
           .forEach((x) => (search_dict[x.split("=")[0]] = x.split("=")[1]));
         // let new_state = { display_notes: true };
-        let new_state = {...state};
+        let new_state = { ...state };
         let upd = (key, newkey) => {
           if (search_dict[key]) new_state[newkey] = search_dict[key];
         };
         upd("apikey", "apikey");
         upd("appid", "appid");
         upd("t", "transparent");
-        if(new_state["transparent"]) local_state["transparent"]=true;
-        if (new_state["apikey"] && new_state["appid"]){
+        if (new_state["transparent"]) local_state["transparent"] = true;
+        if (new_state["apikey"] && new_state["appid"]) {
           //save to local storage
           localStorage.setItem("apikey", new_state["apikey"]);
           localStorage.setItem("appid", new_state["appid"]);
           full_reload(new_state);
           return;
-        }else{
+        } else {
           console.log("no apikey and appid found, rolling back to local storage");
         }
       } catch (e) {
@@ -128,12 +138,12 @@ function App() {
     let appid = localStorage.getItem("appid");
     if (apikey && apikey !== "undefined" && appid && appid !== "undefined") {
       //~undefined is a string
-      let local_state={...state, apikey, appid};
+      let local_state = { ...state, apikey, appid };
       full_reload(local_state);
     } else {
       html_log("no apikey and appid found, please enter them manually");
     }
-  }, [window.location.search]);
+  }, []); //window.location.search isn't a valid dependency because mutating it doesn't re-render the component
 
   // useEffect(() => {
   //   if (state.apikey && state.appid && state.display_notes) {
@@ -142,7 +152,7 @@ function App() {
   // }, [state.display_notes]);
 
   // get notes data from mongodb
-  async function db_request(local_state, action, data, cancel_token=null) {
+  async function db_request(local_state, action, data, cancel_token = null) {
     //=stateless
     return axios.post("/cors_avoidance", data, {
       headers: {
@@ -150,16 +160,16 @@ function App() {
         appid: local_state.appid,
         api_action: action,
       },
-      cancelToken: cancel_token?cancel_token.token:null
+      cancelToken: cancel_token ? cancel_token.token : null,
     });
   }
   // note structure:
-  // {(outer)*not saved*,
-  // note: {(inner)*saved, also what is loaded from the database*}
+  // ~{(outer)*not saved*, copied with ... meaning that it can contain unserializeable data, but *should not contain nested objects*}
+  // ~note: {(inner)*saved*, also what is loaded from the database. **must be serializable**}
   // }
   // Inner:
   // _id : string, required for MongoDB.
-  //   !NOTE: the id can not be changed or created locally, it is generated by the database and returned to the client
+  //   ~NOTE: the id can not be changed or created locally, it is generated by the database and returned to the client
   // type : "NOTE" for all notes, "DATE" for last update
   // Name : string (with a limit?)
   // Description : arbitrary string
@@ -185,7 +195,7 @@ function App() {
       _auto: outer.note.data._auto,
     };
   }
-  async function request_all_data(local_state, cancel_token=null) {
+  async function request_all_data(local_state, cancel_token = null) {
     //=stateless, *mutates* state, may push date, throws
     try {
       let response = await db_request(local_state, "find", {}, cancel_token);
@@ -212,16 +222,21 @@ function App() {
     }
   }
 
-  async function push_current_date(local_state, cancel_token=null) {
+  async function push_current_date(local_state, cancel_token = null) {
     //=stateless, *mutates* state, pushes date, throws
     let curr_date = new Date();
     try {
-      let response = await db_request(local_state, "replaceOne", {
-        filter: { type: "DATE" },
-        replacement: { type: "DATE", date: { $date: curr_date } },
-        upsert: true,
-      }, cancel_token);
-      console.log("updated date");//~not needed in production
+      await db_request(
+        local_state,
+        "replaceOne",
+        {
+          filter: { type: "DATE" },
+          replacement: { type: "DATE", date: { $date: curr_date } },
+          upsert: true,
+        },
+        cancel_token
+      );
+      console.log("updated date"); //~not needed in production
       local_state.last_db_update_date = curr_date;
       return local_state;
     } catch (error) {
@@ -231,12 +246,12 @@ function App() {
     }
   }
 
-  async function get_last_db_update_date(local_state, cancel_token=null) {
+  async function get_last_db_update_date(local_state, cancel_token = null) {
     //=stateless, *mutates* state, may push date, throws
     try {
-      console.log("getting last db update date");//!debug
+      console.log("getting last db update date"); //!debug
       let response = await db_request(local_state, "findOne", { filter: { type: "DATE" } }, cancel_token);
-      console.log("got last db update date");//!debug
+      console.log("got last db update date"); //!debug
       let data = JSON.parse(response.data).document;
       if (!data) {
         console.error("no date found, creating new one");
@@ -385,50 +400,56 @@ function App() {
     //autoupdate order every second
     function sort_interval() {
       _sort_timeout_id = setTimeout(() => {
-        console.log("sorting");
-        console.time("sort");
+        //time the execution and if it takes too long, log it
+        let start = Date.now();
         setNotes((local_notes) => update_order(local_notes));
-        console.timeEnd("sort");
+        let end = Date.now();
+        if (end - start > 500) {
+          console.warn("sorting took " + (end - start) / 1000 + "s");
+          html_log("sorting took " + (end - start) / 1000 + "s");
+        }
         sort_interval();
       }, 1000);
     }
-    
-    async function db_check_interval() {
-      //create promise
-      let promise = new Promise((resolve, reject) => {
-        _db_resolve_func = resolve;//allows to execute after async function that accesses state
-        _db_reject_func = reject;
-      });
-      setDBInterval((x) => x + 1);
-      console.log("updated db interval")//!debug
-      let start_new_interval = ()=>(_db_timeout_id=setTimeout(db_check_interval, 15000));
-      try{
-        console.log("waiting");//!debug
-        await promise;
-        start_new_interval();
-        console.log("launched new interval");//!debug
-      }catch(error){
-        if(axios.isCancel(error)){
-          console.log("db_check_interval canceled");
-          html_log("db_check_interval canceled");
-        }else{
-          console.error("failed to check for updates");
-          html_log("failed to check for updates");
-          console.error(error);
-          html_log(error);
-          // start_new_interval();
+
+    function db_check_interval() {
+      _db_timeout_id = setTimeout(async () => {
+        //create promise
+        let promise = new Promise((resolve, reject) => {
+          _db_resolve_func = resolve; //allows to execute after async function that accesses state
+          _db_reject_func = reject;
+        });
+        setDBInterval((x) => x + 1);
+        console.log("updated db interval"); //!debug
+        try {
+          console.log("waiting"); //!debug
+          await promise;
+          db_check_interval();
+          console.log("launched new interval"); //!debug
+        } catch (error) {
+          if (axios.isCancel(error)) {
+            console.log("db_check_interval canceled");
+            html_log("db_check_interval canceled");
+          } else {
+            console.error("failed to check for updates");
+            html_log("failed to check for updates");
+            console.error(error);
+            html_log(error);
+            // db_check_interval();
+          }
         }
-      }
-      _db_resolve_func = null;
-      _db_reject_func = null;
+        _db_resolve_func = null;
+        _db_reject_func = null;
+      }, 15000);
     }
     sort_interval();
+    console.log("initial db_check interval launched"); //!debug
     db_check_interval();
   }
   useEffect(() => {
     if (dbInterval > 0) {
-    console.log("db interval updated");//!debug
-    db_check_request(state);//retrieves the newest state
+      console.log("db interval updated"); //!debug
+      db_check_request(state); //retrieves the newest state
     }
   }, [dbInterval]);
 
@@ -437,47 +458,52 @@ function App() {
     try {
       _db_cancel_token = axios.CancelToken.source();
       let new_date = null;
-      console.log("checking for updates");//!debug
+      console.log("checking for updates"); //!debug
+      // await (new Promise((resolve) => setTimeout(resolve, 1000)));//!debug
       [local_state, new_date] = await get_last_db_update_date(local_state, _db_cancel_token);
-      console.log("db update date: ", new_date);//!debug
-      console.log("local date: ", original_state.last_db_update_date);//!debug
-      console.log("new date > local date: ", new_date > original_state.last_db_update_date);//!debug
+      _db_cancel_token = null;
+      console.log("db update date: ", new_date); //!debug
+      console.log("local date: ", original_state.last_db_update_date); //!debug
+      console.log("new date > local date: ", new_date > original_state.last_db_update_date); //!debug
       if (new_date > original_state.last_db_update_date) {
-        console.log("new updates found, stopped updates and reloading");//!debug
-        // stop_autoupdate();
-        await full_reload(local_state, _db_cancel_token);
-        _db_cancel_token = null;
-      }else{
-        _db_cancel_token = null;
+        console.log("new updates found, stopped updates, locked settings and reloading"); //!debug
+        _is_updating_data = true;
+        stop_autoupdate();
+        // await (new Promise((resolve) => setTimeout(resolve, 1000)));//!debug
+        await full_reload(local_state);
+        _is_updating_data = false;
+      } else {
         _db_resolve_func();
       }
     } catch (error) {
       _db_reject_func(error);
+      _is_updating_data = false;
+      _db_cancel_token = null;
     }
   }
-      
-
-
 
   function stop_autoupdate() {
     clearTimeout(_sort_timeout_id);
     clearTimeout(_db_timeout_id);
-    if(_db_cancel_token){
+    if (_db_cancel_token) {
       _db_cancel_token.cancel();
-      _db_cancel_token = null;
+      // _db_cancel_token.cancel();//doesn't seem to do anything
     }
     _sort_timeout_id = 0;
     _db_timeout_id = 0;
+    console.log("stopped autoupdate"); //!debug
   }
 
-  async function full_reload(local_state, cancel_token=null) {
+  async function full_reload(local_state) {
     // =stateful, updates state and notes
+    //~NOTE: does not cancel auto-update or lock settings
     // let local_state = { ...state };
-    stop_autoupdate();//~not sure if it's good to keep it here even if no auto-update is running, but probably is
+    // // stop_autoupdate();//~not sure if it's good to keep it here even if no auto-update is running, but probably is
+    //~ the above does not work because it cancels its own token
     let new_notes = [];
     try {
       setDisplayNotes(true);
-      [local_state, new_notes] = await request_all_data(local_state, cancel_token);
+      [local_state, new_notes] = await request_all_data(local_state);
       new_notes = construct_all_priorities(new_notes);
       new_notes = update_order(new_notes);
       setNotes(new_notes);
@@ -503,23 +529,103 @@ function App() {
   }
 
   function f() {
-    html_log("hello world");
+    // html_log("hello world");
+    if (_is_updating_data) {
+      html_log("Updating data, please wait");
+      return;
+    }
+    stop_autoupdate();
+    append_yes_no_popup(
+      "hello world",
+      "no",
+      () => {
+        html_log("no");
+        start_autoupdate();
+      },
+      "yes",
+      () => {
+        console.log("yes");
+        start_autoupdate();
+      }
+    );
+  }
+
+  function append_popup(data) {
+    setPopupStack((stack) => [...stack, data]);
+  }
+  function append_yes_no_popup_raw(title, no, onNo, yes, onYes) {
+    append_popup({
+      content: (index) => <YesNoPopup title={title} no={no} onNo={onNo} yes={yes} onYes={onYes} />,
+    });
+  }
+  //=automatically pops the popup after clicking yes or no
+  //~NOTE: does not automatically stop and restart auto-update, or check _is_updating_data
+  function append_yes_no_popup(title, no, onNo, yes, onYes) {
+    let close_and = (func) => {
+      return () => {
+        pop_popup();
+        func();
+      };
+    };
+    append_yes_no_popup_raw(title, no, close_and(onNo), yes, close_and(onYes));
+  }
+
+  function pop_popup() {
+    setPopupStack((stack) => {
+      return stack.slice(0, stack.length - 1);
+    });
+  }
+  function clear_popups() {
+    setPopupStack([]);
+  }
+  function onNoteClick(pos) {
+    if (_is_updating_data) {
+      html_log("Cannot edit while updating data");
+      return;
+    }
+    stop_autoupdate();
+    append_popup({
+      content: (index) => <NoteEditor pos={pos} origin_notes={notes} />, //!todo: have to pass relevant functions
+    });
   }
 
   return (
     <div className="App" style={state.transparent ? { backgroundColor: "transparent" } : {}}>
-      <div className="log_remainder" style={{ flex: 1, overflowY: "scroll" }}>
+      <div className="log_remainder" style={{ flex: 1, overflowY: "auto" }}>
         {displayNotes ? (
-          <Notes
-            data={notes}
-            func={f}
-            resetFunc={() => {
-              // setNotes([]);
-              // load_all_data();
-              // update_state({ display_notes: false });
-              rollback_to_input(state);
-            }}
-          />
+          <>
+            <Notes
+              data={notes}
+              func={f}
+              resetFunc={() => {
+                if (_is_updating_data) {
+                  html_log("Cannot reset while updating data");
+                  return;
+                }
+                stop_autoupdate();
+                append_yes_no_popup(
+                  "Go back to selecting appid and apikey? This will erase all notes.",
+                  "No",
+                  start_autoupdate,
+                  "Yes",
+                  () => {
+                    rollback_to_input(state);
+                  }
+                );
+              }}
+              onNoteClick={(pos) => {
+                if (_is_updating_data) {
+                  html_log("Cannot change notes while updating data");
+                  return;
+                }
+
+                console.log("clicked note: (pos, name)", pos, notes[pos].note.name);
+              }}
+            />
+            {popupStack.map((data, index) => (
+              <Popup zIndex={index + 1}>{data.content(index)}</Popup>
+            ))}
+          </>
         ) : (
           <ApiInfoInput
             onChange={(e, key) => {
@@ -543,6 +649,82 @@ function App() {
   );
 }
 
+function Popup({ zIndex, children }) {
+  return (
+    <div
+      className="popup_background"
+      style={{
+        zIndex: zIndex,
+        backgroundColor: "rgba(0,0,0,0.4)",
+        position: "absolute",
+        top: "0",
+        left: "0",
+        width: "100%",
+        height: "100%",
+        display: "flex",
+        alignItems: "center",
+      }}
+    >
+      <div
+        className="popup"
+        style={{
+          backgroundColor: "rgba(0,0,0,0.5)",
+          backdropFilter: "blur(3px)",
+          borderRadius: "5px",
+          padding: "5px",
+          margin: "auto",
+          width: "90%",
+          height: "90%",
+          zIndex: zIndex,
+          overflowY: "auto",
+        }}
+      >
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function YesNoPopup({ title, no, onNo, yes, onYes }) {
+  return (
+    <div
+      className="yes_no_popup"
+      style={{
+        height: "100%",
+        width: "100%",
+        display: "flex",
+        flexDirection: "column",
+        justifyContent: "space-between",
+        alignItems: "center",
+      }}
+    >
+      {/* center text */}
+      <div className="yes_no_title" style={{ maxHeight: "50%", whiteSpace: "normal", overflow: "auto" }}>
+        {title}
+      </div>
+      <div
+        className="yes_no_buttons"
+        style={{
+          flex: 1,
+          display: "flex",
+          flexDirection: "row",
+          justifyContent: "space-between",
+          alignItems: "center",
+          width: "100%",
+          overflow: "auto",
+        }}
+      >
+        <button className="no_button" style={{ flex: 1 }} onClick={onNo}>
+          {no}
+        </button>
+        <button className="yes_button" style={{ flex: 1 }} onClick={onYes}>
+          {yes}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function ApiInfoInput({ onChange, apikey, appid, request }) {
   return (
     <div className="api_info_input">
@@ -559,19 +741,23 @@ function ApiInfoInput({ onChange, apikey, appid, request }) {
   );
 }
 
-function Notes({ data, func, resetFunc }) {
+function Notes({ data, func, resetFunc, onNoteClick }) {
   if (data.length === 0) {
     return <div className="notes">Loading...</div>;
   }
   return (
     <div className="notes">
-      <button onClick={func}>func</button>
-      <br />
-      <button onClick={resetFunc}>reset</button>
+      {/*  */}
+      <table>
+        <tr>
+          <button onClick={func}>func</button>
+          <button onClick={resetFunc}>reset</button>
+        </tr>
+      </table>
       <br />
       {data.map((outer, i) => (
         // <div key={i}>{JSON.stringify(note)}</div>
-        <Note key={i} data={outer} />
+        <Note key={i} data={outer} onClick={() => onNoteClick(i)} />
       ))}
 
       {/* {Array(20).fill().map((_,i) =>
@@ -587,14 +773,13 @@ function Notes({ data, func, resetFunc }) {
 function col_at_gradient(t, gradient) {
   if (t <= gradient[0][0]) return gradient[0][1];
   if (t >= gradient[gradient.length - 1][0]) return gradient[gradient.length - 1][1];
-  for (var i = 0; i < gradient.length - 1; i++) {
+  for (let i = 0; i < gradient.length - 1; i++) {
     if (t == gradient[i + 1][0]) return gradient[i + 1][1];
     if (t >= gradient[i][0] && t <= gradient[i + 1][0]) {
-      var t0 = gradient[i][0];
-      var t1 = gradient[i + 1][0];
-      var c0 = gradient[i][1];
-      var c1 = gradient[i + 1][1];
-      var c = [];
+      let t0 = gradient[i][0];
+      let t1 = gradient[i + 1][0];
+      let c0 = gradient[i][1];
+      let c1 = gradient[i + 1][1];
       return c0.map((x, i) => x + ((c1[i] - x) * (t - t0)) / (t1 - t0));
     }
   }
@@ -606,15 +791,14 @@ function arr_to_rgb(arr) {
   return `rgb(${arr[0]},${arr[1]},${arr[2]})`;
 }
 
-function Note({ data }) {
+function Note({ data, onClick }) {
   try {
     return (
-      <div className="note" style={{ position: "relative", width: "100%", height: "40px", display: "flex", alignItems: "center"}} onClick={() => console.log(data)}>
-        {/* <ProgressBar
-          now={data.val}
-          variant={data.failed ? "danger" : "info"}
-          style={{ position: "absolute", top: "5%", left: 0, width: "100%", height: "90%", bg: "green" }}
-        /> */}
+      <div
+        className="note"
+        style={{ position: "relative", width: "100%", height: "40px", display: "flex", alignItems: "center" }}
+        onClick={onClick}
+      >
         <div
           className="progress"
           style={{
@@ -642,29 +826,147 @@ function Note({ data }) {
             }}
           />
         </div>
-        <div style={{ textAlign: "center", textOverflow: "ellipsis", zIndex:1, width: "100%"}}>
-        {`${Math.round(data.val)}% - ${data.note.name}`}
+        <div style={{ textAlign: "center", textOverflow: "ellipsis", zIndex: 1, width: "100%" }}>
+          {data.failed ? `failed - ${data.note.name}` : `${Math.round(data.val)}% - ${data.note.name}`}
         </div>
-        {/* <div
-          style={{
-            textAlign: "center",
-            textOverflow: "ellipsis",
-            lineHeight: "100%"
-          }}
-        >
-          {`${data.val}% - ${data.note.name}`}
-        </div> */}
       </div>
-      //   test
-      // </ProgressBar>
-      // <div className="note">
-      //   {JSON.stringify(data)}
-      // </div>
     );
   } catch (e) {
     console.error(e);
     // html_log(e);//~not defined
     return <ProgressBar now={100} variant="danger" label="error" />;
+  }
+}
+
+function NoteEditor({ pos, origin_notes }) {
+  const [notes, setNotes] = useState([...origin_notes]);
+  const [outer, setOuter] = useState({});
+  useEffect(() => {
+    try {
+      let _note_copy = structuredClone(origin_notes[pos].note);
+      setOuter({ ...origin_notes[pos], note: _note_copy });
+    } catch (e) {
+      console.error("note contains unserializable data");
+      console.error("HANDLING NOT IMPLEMENTED");
+      console.error(e);
+      html_log("note contains unserializable data");
+      html_log(e);
+      return <div>note contains unserializable data</div>; //!supposed to dump note data
+    }
+  }, [pos, origin_notes]);
+  //bool array, decides what note fields should be copied over and what to save in database
+  const [dependencies, setDependencies] = useState(Array(origin_notes[pos].length).fill(false));
+  function add_dependency(_in) {
+    //if _in is a number, convert to array
+    let arr = Array.isArray(_in) ? _in : [_in];
+    arr = arr.filter((x) => !dependencies[x]);
+    if (!arr.length) return;
+    try {
+      let _note_copies = arr.map((x) => structuredClone(origin_notes[x].note));
+      let _new_notes = [...notes];
+      arr.forEach((x, i) => {
+        _new_notes[x] = { ...origin_notes[x], note: _note_copies[i] };
+      });
+      setNotes(_new_notes);
+    } catch (e) {
+      if (e.name === "DataCloneError") {
+        throw "unserializable";
+      }
+    }
+  }
+
+  function full_copy_note(_in = pos) {
+    //~may be inefficient if copying something like a database, but it is up to the user to understand what they are doing
+    //if array, copy those notes
+    try {
+      let arr = Array.isArray(_in) ? _in : [_in];
+      let _note_copies = arr.map((x) => ({ ...notes[x], note: structuredClone(notes[x].note) }));
+      if (!Array.isArray(_in)) return _note_copies[0];
+      return _note_copies;
+    } catch (e) {
+      throw "unserializable";
+    }
+  }
+  function set_note(_in_pos, _in_note) {
+    let arr_pos = Array.isArray(_in_pos) ? _in_pos : [_in_pos];
+    let arr_note = Array.isArray(_in_note) ? _in_note : [_in_note];
+    if (arr_pos.length !== arr_note.length) throw "length mismatch";
+    let _new_notes = [...notes];
+    arr_pos.forEach((x, i) => {
+      _new_notes[x] = arr_note[i];
+    });
+    setNotes(_new_notes);
+  }
+
+  return (
+    <div className="note-editor" style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column" }}>
+      <div className="note-editor-header" style={{ maxHeight: "50%", width: "100%"}}>
+        <NameAndInput
+          title="name:"
+          value={outer.note.name}
+          placeholder="Enter name"
+          language=""
+          onChange={(e) => setOuter({ ...outer, note: { ...outer.note, name: e.target.value } })}
+        />
+        <NameAndInput
+          title="description:"
+          value={outer.note.description}
+          placeholder="Enter description"
+          language=""
+          onChange={(e) => setOuter({ ...outer, note: { ...outer.note, description: e.target.value } })}
+        />
+        <NameAndInput
+          title="priority code:"
+          value={outer.note._priority_c}
+          placeholder="() => 1;"
+          language="js"
+          onChange={(e) => setOuter({ ...outer, note: { ...outer.note, _priority_c: e.target.value } })}
+        />
+        <PriorityTest priority_code={outer.note._priority_c} />
+        <NameAndInput
+          title="settings code:"
+          value={outer.note._settings_c}
+          placeholder="() => <></>;"
+          language="js"
+          onChange={(e) => setOuter({ ...outer, note: { ...outer.note, _settings_c: e.target.value } })}
+        />
+        <button onClick={}>Reload settings</button>//!not implemented
+        <NameAndInput
+          title="json-ify code:"
+          value={outer.note._jsonify_c}
+          placeholder="(outer) => default_jsonify(outer);//only change if you know what you are doing"
+          language="js"
+          onChange={(e) => setOuter({ ...outer, note: { ...outer.note, _jsonify_c: e.target.value } })}
+        />
+      </div>
+      <div className="note-editor-remainder" style={{ flex: 1, width: "100%", outline: "1px solid Aqua"}}>
+        <CustomSettings notes={notes} outer={outer} />
+      </div>
+      <div className="note-editor-footer" style={{ maxHeight: "15%", width: "100%"}}>
+        {/* close button (request to save or discard), toggle through normal/hidden top/hidden bottom */} 
+      </div>
+    </div>
+  );
+}
+
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null};
+  }
+
+  static getDerivedStateFromError(error) {
+    // Update state so the next render will show the fallback UI.
+    return { hasError: true, error: error };
+  }
+
+
+  render() {
+    if (this.state.hasError) {
+      // You can render any custom fallback UI
+      return <div style={{color: "red"}}>Error caught: {this.state.error.stack}</div>;
+    }
+    return this.props.children;
   }
 }
 
@@ -709,7 +1011,6 @@ function Log({ htmlLogList, clearFunc }) {
     <div
       className="log"
       style={{
-        maxHeight: "20vh",
         position: "relative",
         padding: "10px",
         maxHeight: "20vh+5px",
@@ -754,5 +1055,3 @@ function Log({ htmlLogList, clearFunc }) {
 // }, [htmlLogList]);
 
 export default App;
-
-
