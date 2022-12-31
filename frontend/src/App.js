@@ -585,7 +585,10 @@ function App() {
     }
     stop_autoupdate();
     append_popup({
-      content: (index) => <NoteEditor pos={pos} origin_notes={notes} />, //!todo: have to pass relevant functions
+      content: (index) => <NoteEditor pos={pos} origin_notes={notes} _public={{//_public passes functions to NoteEditor
+        append_yes_no_popup,
+      }}
+       />,
     });
   }
 
@@ -838,9 +841,34 @@ function Note({ data, onClick }) {
   }
 }
 
-function NoteEditor({ pos, origin_notes }) {
+function NoteEditor({ pos, origin_notes, _public}) {//public functions
   const [notes, setNotes] = useState([...origin_notes]);
   const [outer, setOuter] = useState({});
+  const [viewState, setViewState] = useState(0);
+  const [err, setErr] = useState({ hasError: false, error: null, onEval: false });
+  const [CustomSettings, setCustomSettings] = useState(() => () => <></>); //two layers because counts as constructor
+  const [reloadSettingsState, setReloadSettingsState] = useState(0);
+  function reloadSettings() {
+    setReloadSettingsState(reloadSettingsState + 1);
+  }
+  useEffect(() => {
+    try {
+      let newCustomSettings = eval(transpile(outer.note._settings_c));
+      setCustomSettings(() => newCustomSettings);
+      setErr({ hasError: false, error: null, onEval: false });
+    } catch (e) {
+      console.error("failed to eval custom settings");
+      console.error(e);
+      setErr({ hasError: true, error: e, onEval: true });
+    }
+  }, [reloadSettingsState]);
+
+  function cycleViewState() {
+    setViewState((viewState + 1) % 3);
+  }
+  function askClose() {
+
+  }
   useEffect(() => {
     try {
       let _note_copy = structuredClone(origin_notes[pos].note);
@@ -897,74 +925,160 @@ function NoteEditor({ pos, origin_notes }) {
     });
     setNotes(_new_notes);
   }
-
   return (
     <div className="note-editor" style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column" }}>
-      <div className="note-editor-header" style={{ maxHeight: "50%", width: "100%"}}>
-        <NameAndInput
-          title="name:"
-          value={outer.note.name}
-          placeholder="Enter name"
-          language=""
-          onChange={(e) => setOuter({ ...outer, note: { ...outer.note, name: e.target.value } })}
-        />
-        <NameAndInput
-          title="description:"
-          value={outer.note.description}
-          placeholder="Enter description"
-          language=""
-          onChange={(e) => setOuter({ ...outer, note: { ...outer.note, description: e.target.value } })}
-        />
-        <NameAndInput
-          title="priority code:"
-          value={outer.note._priority_c}
-          placeholder="() => 1;"
-          language="js"
-          onChange={(e) => setOuter({ ...outer, note: { ...outer.note, _priority_c: e.target.value } })}
-        />
-        <PriorityTest priority_code={outer.note._priority_c} />
-        <NameAndInput
-          title="settings code:"
-          value={outer.note._settings_c}
-          placeholder="() => <></>;"
-          language="js"
-          onChange={(e) => setOuter({ ...outer, note: { ...outer.note, _settings_c: e.target.value } })}
-        />
-        <button onClick={}>Reload settings</button>//!not implemented
-        <NameAndInput
-          title="json-ify code:"
-          value={outer.note._jsonify_c}
-          placeholder="(outer) => default_jsonify(outer);//only change if you know what you are doing"
-          language="js"
-          onChange={(e) => setOuter({ ...outer, note: { ...outer.note, _jsonify_c: e.target.value } })}
-        />
-      </div>
-      <div className="note-editor-remainder" style={{ flex: 1, width: "100%", outline: "1px solid Aqua"}}>
-        <CustomSettings notes={notes} outer={outer} />
-      </div>
-      <div className="note-editor-footer" style={{ maxHeight: "15%", width: "100%"}}>
-        {/* close button (request to save or discard), toggle through normal/hidden top/hidden bottom */} 
+      {viewState === 1 ? (
+        <></>
+      ) : (
+        <div className="note-editor-header" style={{ maxHeight: viewState === 0 ? "50%" : "100%", width: "100%" }}>
+          <NameAndInput
+            title="name:"
+            value={outer.note.name}
+            placeholder="Enter name"
+            language=""
+            onChange={(e) => setOuter({ ...outer, note: { ...outer.note, name: e.target.value } })}
+          />
+          <NameAndInput
+            title="description:"
+            value={outer.note.description}
+            placeholder="Enter description"
+            language=""
+            onChange={(e) => setOuter({ ...outer, note: { ...outer.note, description: e.target.value } })}
+          />
+          <NameAndInput
+            title="priority code:"
+            value={outer.note._priority_c}
+            placeholder="() => 100;"
+            language="js"
+            onChange={(e) => setOuter({ ...outer, note: { ...outer.note, _priority_c: e.target.value } })}
+          />
+          <PriorityTest priority_code={outer.note._priority_c} />
+          <NameAndInput
+            title="settings code:"
+            value={outer.note._settings_c}
+            placeholder="() => <></>;"
+            language="jsx"
+            onChange={(e) => setOuter({ ...outer, note: { ...outer.note, _settings_c: e.target.value } })}
+          />
+          <button onClick={reloadSettings}>Reload settings</button>//!not implemented
+          <NameAndInput
+            title="json-ify code:"
+            value={outer.note._jsonify_c}
+            placeholder="(outer) => default_jsonify(outer);//only change if you know what you are doing"
+            language="js"
+            onChange={(e) => setOuter({ ...outer, note: { ...outer.note, _jsonify_c: e.target.value } })}
+          />
+        </div>
+      )}
+      {viewState === 2 ? (
+        <></>
+      ) : (
+        <div
+          className="note-editor-remainder"
+          style={{ flex: 1, width: "100%", outline: `1px solid ${err.hasError ? "red" : "aqua"}` }}
+        >
+          <ErrorBoundary err={err} setErr={setErr}>
+            <CustomSettings notes={notes} outer={outer} />
+          </ErrorBoundary>
+        </div>
+      )}
+      <div
+        className="note-editor-footer"
+        style={{ maxHeight: "15%", width: "100%", display: "flex", flexDirection: "row" }}
+      >
+        {/* close button (request to save or discard), toggle button through normal/hidden top/hidden bottom */}
+        <button onClick={askClose} style={{ flex: 1 }}>
+          Close
+        </button>
+        <button onClick={cycleViewState} style={{ flex: 1 }}>
+          Toggle view
+        </button>
       </div>
     </div>
   );
 }
 
+function PriorityTest({ priority_code }) {
+  const [updatePriorityState, setUpdatePriorityState] = useState(0);
+  function updatePriority() {
+    setUpdatePriorityState(updatePriorityState + 1);
+  }
+  const [priority, setPriority] = useState(0);
+  const [err, setErr] = useState({ hasError: false, error: null, onEval: false });
+  useEffect(() => {
+    let _priority = () => 100;
+    try {
+      let _priority = eval(priority_code);
+      if (typeof _priority !== "function") throw "not a function";
+    } catch (e) {
+      console.error("error in priority code eval", e);
+      setErr({ hasError: true, error: e, onEval: true });
+    }
+    try {
+      let _priority_val = _priority();
+      if (typeof _priority_val !== "number") throw "not a number";
+      setPriority(_priority_val);
+      setErr({ hasError: false, error: null, onEval: false });
+    } catch (e) {
+      console.error("error in priority value calculation", e);
+      setErr({ hasError: true, error: e, onEval: false });
+    }
+  }, [updatePriorityState]);
+  return (
+    <>
+      <button onClick={updatePriority}>Update priority</button>
+      {err.hasError ? (
+        <div style={{ color: "red" }}>
+          ERROR{err.onEval ? " (on eval of function)" : ""}: {err.error.toString()}
+        </div>
+      ) : (
+        <div style={
+          priority<0||priority>100?{color:"yellow"}:{}}
+        >
+          Priority{priority<0||priority>100?" (out of range)":""}: {priority}
+        </div>
+      )}
+    </>
+  );
+}
+
+
+
+
+
 class ErrorBoundary extends React.Component {
   constructor(props) {
     super(props);
-    this.state = { hasError: false, error: null};
+    this.state = { hasError: false, error: null, onEval: false };
   }
-
   static getDerivedStateFromError(error) {
-    // Update state so the next render will show the fallback UI.
-    return { hasError: true, error: error };
+    console.error("error in render", error);
+    return { hasError: true, error: error, onEval: false };
   }
-
-
   render() {
-    if (this.state.hasError) {
-      // You can render any custom fallback UI
-      return <div style={{color: "red"}}>Error caught: {this.state.error.stack}</div>;
+    if (this.state.hasError && !this.props.err.hasError) {
+      this.props.setErr({ hasError: true, error: this.state.error, onEval: false });
+      return (
+        <>
+          <button onClick={() => this.setState({ hasError: false, error: null, onEval: false })}>Retry</button>
+          <div style={{ color: "red" }}>
+            ERROR{this.state.onEval ? " (on eval)" : ""}:{" "}
+            {this.state.error.stack ? this.state.error.stack : this.state.error}
+          </div>
+        </>
+      );
+    }
+    if (this.props.err.hasError) {
+      this.state = { hasError: false, error: null, onEval: false };
+      return (
+        <>
+          <button onClick={() => this.props.setErr({ hasError: false, error: null, onEval: false })}>Retry</button>
+          <div style={{ color: "red" }}>
+            ERROR{this.props.err.onEval ? " (on eval)" : ""}:{" "}
+            {this.props.err.error.stack ? this.props.err.error.stack : this.props.err.error}
+          </div>
+        </>
+      );
     }
     return this.props.children;
   }
