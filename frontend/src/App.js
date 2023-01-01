@@ -1,7 +1,7 @@
 import logo from "./logo.svg";
 import "./App.css";
 import ProgressBar from "react-bootstrap/ProgressBar";
-import { useState, useEffect, useRef } from "react";
+// import { useState, useEffect, useRef } from "react";
 import * as _React from "react";
 import axios from "axios";
 import CodeEditor from "@uiw/react-textarea-code-editor";
@@ -13,6 +13,9 @@ function transpile(code) {
   return transform(code, { plugins: ["transform-react-jsx"] }).code;
 }
 const React = _React; //React is not defined in eval
+const useState = _React.useState;//allows direct access in eval
+const useEffect = _React.useEffect;
+const useRef = _React.useRef;
 
 window.mobileCheck = function () {
   let check = false;
@@ -67,6 +70,10 @@ let _db_timeout_id = 0; //needed to cancel timeout
 let _db_cancel_token = null; //needed to cancel axios request
 let _db_resolve_func = null;
 let _db_reject_func = null; //needed to cancel promise
+
+function is_code_valid(code) {
+  return !!(typeof(code)==="string" && code.trim())
+}
 
 function App() {
   const [htmlLogList, setHtmlLogList] = useState([]);
@@ -269,7 +276,7 @@ function App() {
 
   async function save_all_data(local_state, local_notes) {
     //=stateless, *mutates* state, pushes notes and date, throws
-    let to_save = local_notes.map((outer) => outer.jsonify(outer.note));
+    let to_save = local_notes.map((outer) => outer.jsonify(outer));
     try {
       await db_request(local_state, "deleteMany", { filter: { _id: { $in: to_save.map((x) => x._id) } } });
       try {
@@ -310,8 +317,8 @@ function App() {
     return {
       failed: false,
       val: 100,
-      priority: () => 100,
-      settings: () => <></>,
+      priority: (outer, pos, notes) => 100,
+      settings: ({outer,pos,notes}) => <></>,
       jsonify: default_jsonify,
       note: inner,
     };
@@ -329,25 +336,22 @@ function App() {
   // settings() : after transpiling and evaluating _settings_c
   // jsonify() : after evaluating _jsonify_c
   // note : *actual note data*
-  function construct_priority(note) {
+  function construct_priority(outer) {//~evalutes in the correct context
     //=stateless
-    let priority = () => 100;
-    let failed = false;
-    let err = null;
+    let priority = (outer, pos, notes) => 100;
     try {
-      if (note.data._priority_c && note.data._priority_c.trim()) {
-        priority = eval(note.data._priority_c);
+      if (is_code_valid(outer.note.data._priority_c)) {
+        priority = eval(outer.note.data._priority_c);
       }
+      return [priority, false, null];
     } catch (error) {
-      failed = true;
-      err = error;
+      return [priority, true, error];
     }
-    return [priority, failed, err];
   }
   function construct_all_priorities(local_notes) {
     //=stateless
-    return local_notes.map((note, i) => {
-      let [priority, failed, err] = construct_priority(note.note);
+    return local_notes.map((outer, i) => {
+      let [priority, failed, err] = construct_priority(outer.note.data._priority_c);
       if (failed) {
         console.error("failed to construct priority for note " + i + ": ", err);
         html_log("failed to construct priority for note " + i + ": " + err);
@@ -355,6 +359,20 @@ function App() {
       return { ...note, priority: priority, failed: failed };
     });
   }
+  function construct_jsonify(outer) {
+    //=stateless
+    let jsonify = default_jsonify;
+    try {
+      if (is_code_valid(outer.note.data._jsonify_c)) {
+        jsonify=eval(outer.note.data._jsonify_c);
+      }
+      return [jsonify, false, null];
+    } catch (error) {
+      return [jsonify, true, error];
+    }
+  }
+  //*construct_all_jsonifies is not needed because it is only used for the notes that are being saved
+
   // re-evaluate priorities every second, and sort based on resulting values
   // if a note's settings are being accessed, prevent update
   //   simple "is used" check in update
@@ -364,13 +382,13 @@ function App() {
   //   while(is_updating)
   //     await new Promise(resolve => setTimeout(resolve,20))
 
-  function update_priority_val(outer) {
+  function update_priority_val(outer, pos, notes) {
     //=stateless
     let val = 100;
     let failed = false;
     let err = null;
     try {
-      val = outer.priority();
+      val = outer.priority(outer, pos, notes);
     } catch (e) {
       failed = true;
       err = e;
@@ -381,13 +399,13 @@ function App() {
     //=stateless
     let new_notes = local_notes
       .map((outer, i) => {
-        let [val, failed, err] = update_priority_val(outer);
-        //=clamp
+        let [val, failed, err] = update_priority_val(outer, i, local_notes);
+        //=clamp val to [0,100]
         val = Math.max(0, Math.min(100, val));
-        if (failed) {
-          console.error("failed to update priority for note " + i + ": ", err);
-          html_log("failed to update priority for note " + i + ": " + err);
-        }
+        // if (failed) {
+        //   console.error("failed to update priority for note " + i + ": ", err);
+        //   html_log("failed to update priority for note " + i + ": " + err);
+        // }
         return { ...outer, val: val, failed: failed };
       })
       .sort((a, b) => b.val - a.val);
@@ -529,45 +547,37 @@ function App() {
   }
 
   function f() {
-    // html_log("hello world");
-    if (_is_updating_data) {
-      html_log("Updating data, please wait");
-      return;
-    }
-    stop_autoupdate();
-    append_yes_no_popup(
-      "hello world",
-      "no",
-      () => {
-        html_log("no");
-        start_autoupdate();
-      },
-      "yes",
-      () => {
-        console.log("yes");
-        start_autoupdate();
-      }
-    );
   }
 
   function append_popup(data) {
     setPopupStack((stack) => [...stack, data]);
   }
-  function append_yes_no_popup_raw(title, no, onNo, yes, onYes) {
+
+  function append_multi_popup_raw(title, options, maxHeightPercent=50){
     append_popup({
-      content: (index) => <YesNoPopup title={title} no={no} onNo={onNo} yes={yes} onYes={onYes} />,
+      content: (index) => <MultiOptionPopup title={title} options={options} maxHeightPercent={maxHeightPercent} />,
     });
   }
   //=automatically pops the popup after clicking yes or no
   //~NOTE: does not automatically stop and restart auto-update, or check _is_updating_data
-  function append_yes_no_popup(title, no, onNo, yes, onYes) {
+  function append_multi_popup(title, options, maxHeightPercent=50) {
     let close_and = (func) => {
       return () => {
         pop_popup();
         func();
       };
     };
-    append_yes_no_popup_raw(title, no, close_and(onNo), yes, close_and(onYes));
+    append_multi_popup_raw(title, options.map((option) => {
+      return {
+        ...option,
+        onClick: close_and(option.onClick),
+      };
+    }), maxHeightPercent);
+  }
+  //=automatically pops the popup after clicking yes or no
+  //~NOTE: does not automatically stop and restart auto-update, or check _is_updating_data
+  function append_yes_no_popup(title, no, onNo, yes, onYes) {
+    append_multi_popup(title,[{text: no, onClick: onNo}, {text: yes, onClick: onYes}]);
   }
 
   function pop_popup() {
@@ -585,8 +595,15 @@ function App() {
     }
     stop_autoupdate();
     append_popup({
-      content: (index) => <NoteEditor pos={pos} origin_notes={notes} _public={{//_public passes functions to NoteEditor
+      content: (index) => <NoteEditor pos={pos} origin_notes={notes} 
+      closeWithoutSaving={()=>{}}//**works because NoteEditor creates a new copy of notes therefore simply closing it will not affect the original notes
+      saveAndClose={}
+      _public={{//_public passes functions to NoteEditor
         append_yes_no_popup,
+        append_multi_popup_raw,
+        append_multi_popup,
+        construct_priority,
+        pop_popup
       }}
        />,
     });
@@ -688,10 +705,11 @@ function Popup({ zIndex, children }) {
   );
 }
 
-function YesNoPopup({ title, no, onNo, yes, onYes }) {
+
+function MultiOptionPopup({ title, options, maxHeightPercent=50 }) {//horizontal stack
   return (
     <div
-      className="yes_no_popup"
+      className="multi_option_popup"
       style={{
         height: "100%",
         width: "100%",
@@ -702,11 +720,11 @@ function YesNoPopup({ title, no, onNo, yes, onYes }) {
       }}
     >
       {/* center text */}
-      <div className="yes_no_title" style={{ maxHeight: "50%", whiteSpace: "normal", overflow: "auto" }}>
+      <div className="multi_option_title" style={{ maxHeight: `${maxHeightPercent}%`,  overflow: "auto" }}>
         {title}
       </div>
       <div
-        className="yes_no_buttons"
+        className="multi_option_buttons"
         style={{
           flex: 1,
           display: "flex",
@@ -717,16 +735,16 @@ function YesNoPopup({ title, no, onNo, yes, onYes }) {
           overflow: "auto",
         }}
       >
-        <button className="no_button" style={{ flex: 1 }} onClick={onNo}>
-          {no}
-        </button>
-        <button className="yes_button" style={{ flex: 1 }} onClick={onYes}>
-          {yes}
-        </button>
+        {options.map((option) => (
+          <button className="option_button" style={{ flex: 1 }} onClick={option.onClick}>
+            {option.text}
+          </button>
+        ))}
       </div>
     </div>
   );
 }
+
 
 function ApiInfoInput({ onChange, apikey, appid, request }) {
   return (
@@ -841,34 +859,17 @@ function Note({ data, onClick }) {
   }
 }
 
-function NoteEditor({ pos, origin_notes, _public}) {//public functions
+function NoteEditor({ pos, origin_notes, closeWithoutSaving, saveAndClose, _public }) {
   const [notes, setNotes] = useState([...origin_notes]);
-  const [outer, setOuter] = useState({});
+  const [outer, setOuter] = useState(notes[pos]);
   const [viewState, setViewState] = useState(0);
   const [err, setErr] = useState({ hasError: false, error: null, onEval: false });
-  const [CustomSettings, setCustomSettings] = useState(() => () => <></>); //two layers because counts as constructor
+  const [CustomSettings, setCustomSettings] = useState(() => (({outer,pos,notes}) => <></>)); //two layers because counts as constructor
   const [reloadSettingsState, setReloadSettingsState] = useState(0);
   function reloadSettings() {
     setReloadSettingsState(reloadSettingsState + 1);
   }
-  useEffect(() => {
-    try {
-      let newCustomSettings = eval(transpile(outer.note._settings_c));
-      setCustomSettings(() => newCustomSettings);
-      setErr({ hasError: false, error: null, onEval: false });
-    } catch (e) {
-      console.error("failed to eval custom settings");
-      console.error(e);
-      setErr({ hasError: true, error: e, onEval: true });
-    }
-  }, [reloadSettingsState]);
 
-  function cycleViewState() {
-    setViewState((viewState + 1) % 3);
-  }
-  function askClose() {
-
-  }
   useEffect(() => {
     try {
       let _note_copy = structuredClone(origin_notes[pos].note);
@@ -882,9 +883,63 @@ function NoteEditor({ pos, origin_notes, _public}) {//public functions
       return <div>note contains unserializable data</div>; //!supposed to dump note data
     }
   }, [pos, origin_notes]);
+
+  useEffect(() => {
+    try {
+      let newCustomSettings = eval(transpile(outer.note.data._settings_c));
+      setCustomSettings(() => newCustomSettings);
+      setErr({ hasError: false, error: null, onEval: false });
+    } catch (e) {
+      console.error("failed to eval custom settings");
+      console.error(e);
+      setErr({ hasError: true, error: e, onEval: true });
+    }
+  }, [reloadSettingsState]);
+
+  function cycleViewState() {
+    setViewState((viewState + 1) % 3);
+  }
+  function askClose() {
+    _public.append_multi_popup("Close?", [
+      {text:"Cancel",onClick:()=>{}},
+      {text:"Close without saving", onClick:closeWithoutSaving},
+      {text:"Save and close", onClick:()=>{saveAndClose(encodeNotes());}}
+    ]);
+  }
+  function showInfo() {
+    _public.append_multi_popup(
+    <>
+      <h3>Info</h3>
+      <p>
+        Notes are sorted based on their value that is calculated by the note's priority function.<br/>
+        Each note can have a value anywhere from 0 to 100, and the function is evaluated every second.<br/>
+        The structure of a given note is as follows:<br/>
+        <code>outer: {'{'}*constructed functions*,val:num,failed:bool,<br/>
+        note:{'{'}name:str,description:str, data:{'{'}_auto:object, all fields are saved automatically{'}'}{'}'}{'}'}</code><br/>
+        NOTE: there may not be any functions within the <code>note</code> object, otherwise it will not be possible to copy it and it will throw an error (notes cannot be saved in the database!).<br/>
+        The <code>outer</code> object should also not contain any other field that is not copiable with spread operator.
+      </p>
+      <p>
+        Priority function should not modify any field.<br/>
+        Settings function has to <i>return</i> a React component function which follows all the same restrictions (i.e. must be a function and start with uppercase letter) but also same functionalities (i.e. using <code>useState</code> and <code>useEffect</code>) as a normal component function.<br/>
+        It is allowed to modify fields of the note, but only indirectly using <code>fullCopyOuter()</code> or manual spread syntax (not recommended).<br/>
+        It is also possible to modify other notes from the settings function, but it is required to use <code>addDependency(index/indices)</code> and to copy over the note fields with <code>fullCopyNote(index/indices)</code>.<br/>
+        (Note: if addDependency or a copy function fails due to unserializable data, it will <code>throw "unserializable"</code>)<br/>
+        The settings function has props input of the main note, index of the main note, and the array of all notes.<br/>
+        While the main note is present in the array of all notes, it is separate from the main note that is passed and it will be replaced by the one that is passed to the settings function.<br/>
+        This is to avoid unnecessary copying of the whole array of notes for every single change of the main note.<br/>
+        The relevant update methods for the main note and note array are <code>setOuter</code> and <code>setNote(index/indices,note(s))</code>.
+      </p>
+      <p>
+        The settings function also has access to the local variables of NoteEditor, specifically <code>_public</code> object which contains useful functions for creating popups (for more info see <code>append_multi_popup</code> and <code>append_yes_no_popup</code> in <code>App.js</code>).
+      </p>
+    </>,
+    [{text:"Close",onClick:()=>{}}]);
+  }
+
   //bool array, decides what note fields should be copied over and what to save in database
   const [dependencies, setDependencies] = useState(Array(origin_notes[pos].length).fill(false));
-  function add_dependency(_in) {
+  function addDependency(_in) {
     //if _in is a number, convert to array
     let arr = Array.isArray(_in) ? _in : [_in];
     arr = arr.filter((x) => !dependencies[x]);
@@ -902,8 +957,15 @@ function NoteEditor({ pos, origin_notes, _public}) {//public functions
       }
     }
   }
+  function fullCopyOuter(){
+    try{
+      return {...outer,note:structuredClone(outer.note)};
+    }catch(e){
+      throw "unserializable";
+    }
+  }
 
-  function full_copy_note(_in = pos) {
+  function fullCopyNote(_in) {
     //~may be inefficient if copying something like a database, but it is up to the user to understand what they are doing
     //if array, copy those notes
     try {
@@ -915,7 +977,7 @@ function NoteEditor({ pos, origin_notes, _public}) {//public functions
       throw "unserializable";
     }
   }
-  function set_note(_in_pos, _in_note) {
+  function setNote(_in_pos, _in_note) {
     let arr_pos = Array.isArray(_in_pos) ? _in_pos : [_in_pos];
     let arr_note = Array.isArray(_in_note) ? _in_note : [_in_note];
     if (arr_pos.length !== arr_note.length) throw "length mismatch";
@@ -925,6 +987,21 @@ function NoteEditor({ pos, origin_notes, _public}) {//public functions
     });
     setNotes(_new_notes);
   }
+
+  function encodeNotes(){
+    //constructs and runs jsonify functions of dependencies and outer and runs them. In case of an error returns the error message
+    notes.map((x,i)=>{[i,x]}).filter((x)=>dependencies[x[0]]).concat([[pos,outer]]).forEach((x)=>{
+      try{
+        _public.construct_jsonify(x[1].note);
+        
+      }catch(e){
+        return e;
+      }
+    }
+
+
+  }
+
   return (
     <div className="note-editor" style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column" }}>
       {viewState === 1 ? (
@@ -947,27 +1024,28 @@ function NoteEditor({ pos, origin_notes, _public}) {//public functions
           />
           <NameAndInput
             title="priority code:"
-            value={outer.note._priority_c}
-            placeholder="() => 100;"
+            value={outer.note.data._priority_c}
+            placeholder="(outer, pos, notes) => 100;"
             language="js"
-            onChange={(e) => setOuter({ ...outer, note: { ...outer.note, _priority_c: e.target.value } })}
+            onChange={(e) => setOuter({ ...outer, note: { ...outer.note, data: { ...outer.note.data, _priority_c: e.target.value } } })}
           />
-          <PriorityTest priority_code={outer.note._priority_c} />
+          <PriorityTest constructor={_public.construct_priority} outer={outer} notes={notes} pos={pos} />
           <NameAndInput
             title="settings code:"
-            value={outer.note._settings_c}
-            placeholder="() => <></>;"
+            value={outer.note.data._settings_c}
+            placeholder="({outer, pos, notes}) => <></>;"
             language="jsx"
-            onChange={(e) => setOuter({ ...outer, note: { ...outer.note, _settings_c: e.target.value } })}
+            onChange={(e) => setOuter({ ...outer, note: { ...outer.note, data: { ...outer.note.data, _settings_c: e.target.value } } })}
           />
           <button onClick={reloadSettings}>Reload settings</button>//!not implemented
           <NameAndInput
             title="json-ify code:"
-            value={outer.note._jsonify_c}
+            value={outer.note.data._jsonify_c}
             placeholder="(outer) => default_jsonify(outer);//only change if you know what you are doing"
             language="js"
-            onChange={(e) => setOuter({ ...outer, note: { ...outer.note, _jsonify_c: e.target.value } })}
+            onChange={(e) => setOuter({ ...outer, note: { ...outer.note, data: { ...outer.note.data, _jsonify_c: e.target.value } } })}
           />
+          <JsonifyTest constructor={_public.construct_jsonify} outer={outer} />
         </div>
       )}
       {viewState === 2 ? (
@@ -978,7 +1056,7 @@ function NoteEditor({ pos, origin_notes, _public}) {//public functions
           style={{ flex: 1, width: "100%", outline: `1px solid ${err.hasError ? "red" : "aqua"}` }}
         >
           <ErrorBoundary err={err} setErr={setErr}>
-            <CustomSettings notes={notes} outer={outer} />
+            <CustomSettings outer={outer} pos={pos} notes={notes} />
           </ErrorBoundary>
         </div>
       )}
@@ -986,19 +1064,23 @@ function NoteEditor({ pos, origin_notes, _public}) {//public functions
         className="note-editor-footer"
         style={{ maxHeight: "15%", width: "100%", display: "flex", flexDirection: "row" }}
       >
-        {/* close button (request to save or discard), toggle button through normal/hidden top/hidden bottom */}
+        {/* close button (request to save or discard), toggle button through normal/hidden top/hidden bottom, info */}
         <button onClick={askClose} style={{ flex: 1 }}>
           Close
         </button>
         <button onClick={cycleViewState} style={{ flex: 1 }}>
-          Toggle view
+          {viewState === 0 ? "Hide top" : viewState === 1 ? "Hide bottom" : "Show all"}
+        </button>
+        {/*//TODO should have a question mark icon */}
+        <button onClick={showInfo} style={{ flex: 1 }}>
+          Info
         </button>
       </div>
     </div>
   );
 }
 
-function PriorityTest({ priority_code }) {
+function PriorityTest({ priority_code, constructor, outer, pos, notes }) {
   const [updatePriorityState, setUpdatePriorityState] = useState(0);
   function updatePriority() {
     setUpdatePriorityState(updatePriorityState + 1);
@@ -1006,16 +1088,19 @@ function PriorityTest({ priority_code }) {
   const [priority, setPriority] = useState(0);
   const [err, setErr] = useState({ hasError: false, error: null, onEval: false });
   useEffect(() => {
-    let _priority = () => 100;
+    let _priority = (outer, pos, notes) => 100;
     try {
-      let _priority = eval(priority_code);
+      let failed=false;
+      let err=null;
+      [_priority, failed, err] = constructor(priority_code);
+      if (failed) throw err;
       if (typeof _priority !== "function") throw "not a function";
     } catch (e) {
       console.error("error in priority code eval", e);
       setErr({ hasError: true, error: e, onEval: true });
     }
     try {
-      let _priority_val = _priority();
+      let _priority_val = _priority(outer, pos, notes);
       if (typeof _priority_val !== "number") throw "not a number";
       setPriority(_priority_val);
       setErr({ hasError: false, error: null, onEval: false });
@@ -1041,8 +1126,66 @@ function PriorityTest({ priority_code }) {
     </>
   );
 }
+function JsonifyTest({ jsonify_code, constructor, outer }) {
+  const [updateJsonifyState, setUpdateJsonifyState] = useState(0);
+  function updateJsonify() {
+    setUpdateJsonifyState(updateJsonifyState + 1);
+  }
+  const [json, setJson] = useState({});
+  const [err, setErr] = useState({ hasError: false, error: null, onEval: false });
+  useEffect(() => {
+    let _jsonify = (outer) => default_jsonify(outer);//only change if you know what you are doing
+    try {
+      let failed=false;
+      let err=null;
+      [_jsonify, failed, err] = constructor(jsonify_code);
+      if (failed) throw err;
+      if (typeof _jsonify !== "function") throw "not a function";
+    } catch (e) {
+      console.error("error in jsonify code eval", e);
+      setErr({ hasError: true, error: e, onEval: true });
+    }
+    try {
+      let _json = _jsonify(outer);
+      if (typeof _json !== "object") throw "not an object";
+      setJson(_json);
+      setErr({ hasError: false, error: null, onEval: false });
+    } catch (e) {
+      console.error("error in jsonify value calculation", e);
+      setErr({ hasError: true, error: e, onEval: false });
+    }
+  }, [updateJsonifyState]);
+  return (
+    <>
+      <button onClick={updateJsonify}>Update jsonify</button>
+      {err.hasError ? (
+        <div style={{ color: "red" }}>
+          ERROR{err.onEval ? " (on eval of function)" : ""}: {err.error.toString()}
+        </div>
+      ) : (
+        <div>
+          Jsonify: {JSON.stringify(json)}
+        </div>
+      )}
+    </>
+  );
+}
 
-
+function NameAndInput({ title, value, placeholder, language, onChange }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "row" }}>
+      {title}
+      <CodeEditor value={value} placeholder={placeholder} language={language} onChange={onChange} padding={12}
+      style={{
+        fontFamily:"ui-monospace,SFMono-Regular,SF Mono,Consolas,Liberation Mono,Menlo,monospace",
+        fontSize:"15px",
+        maxHeight:"400px",//~not sure this is useful
+        overflow:"auto",
+      }}
+      />
+    </div>
+  );
+}
 
 
 

@@ -247,3 +247,34 @@
   //     }
   //   );  
   // }}
+
+  //~ f()
+      // // html_log("hello world");
+      // if (_is_updating_data) {
+      //   html_log("Updating data, please wait");
+      //   return;
+      // }
+      // stop_autoupdate();
+      // append_yes_no_popup(
+      //   "hello world",
+      //   "no",
+      //   () => {
+      //     html_log("no");
+      //     start_autoupdate();
+      //   },
+      //   "yes",
+      //   () => {
+      //     console.log("yes");
+      //     start_autoupdate();
+      //   }
+      // );
+  //~ askClose
+      // function askClose() {
+      //   _public.append_multi_popup_raw("Close?", [
+      //     {text:"Cancel",onClick:_public.pop_popup},
+      //     {text:"Close without saving", onClick:closeWithoutSaving},
+      //     {text:"Save and close", onClick:()=>{saveAndClose(encodeNotes());}}
+      //   ]);
+      // }
+      ////unfortunately required because if there is an error during saving, the popup should not be popped
+    
