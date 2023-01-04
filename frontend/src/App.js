@@ -631,7 +631,6 @@ function App() {
   function f() {}
 
   function append_popup(data) {
-    console.log("appending popup")//!debug
     setPopupStack((stack) => [...stack, data]);
   }
 
@@ -703,7 +702,12 @@ function App() {
       let new_append=[];
       // debugger;
       try{
-        [local_state, local_notes, delete_on_false, new_append] = await collisionHandle(jsonified_notes, local_state, local_notes, false);//do not push date
+        let new_date = null;
+        [local_state, new_date] = await get_last_db_update_date(local_state, _db_cancel_token);
+        if (new_date > local_state.last_db_update_date) {
+          html_log("newer data exists on server, handling collision");
+          [local_state, local_notes, delete_on_false, new_append] = await collisionHandle(jsonified_notes, local_state, local_notes, false);//do not push date
+        }
       }catch(e){
         console.error("failed to handle collision: ", e);
         html_log(["failed to handle collision: ", e]);
@@ -718,23 +722,10 @@ function App() {
           // html_log("saved data");
           local_state = await push_current_date(local_state);
           notesToSave.forEach(([outer, i]) => {
-            let [priority, failed, err] = construct_priority(outer);
-            if (failed) {
-              console.error("failed to construct priority for note " + i + ": ", err);
-              html_log(["failed to construct priority for note " + i + ": ", err]);
-            }
-            local_notes[i] = { ...outer, priority: priority, failed: failed };
-          });
-          local_notes = local_notes.filter((x, i) => delete_on_false[i]);
-          new_append=new_append.map((outer)=>{
-            let [priority, failed, err] = construct_priority(outer);
-            if (failed) {
-              console.error(`failed to construct priority for new note, name - ${outer.name}: `, err);
-              html_log([`failed to construct priority for new note, name - ${outer.name}: `, err]);
-            }
-            return { ...outer, priority: priority, failed: failed };
+            local_notes[i] = outer;
           });
           local_notes = local_notes.concat(new_append);
+          local_notes = construct_all_priorities(local_notes);
           setNotes(update_order(local_notes));
           setState(local_state);
           clear_popups();
@@ -760,7 +751,6 @@ function App() {
       return;
     }
     stop_autoupdate();
-    console.log("what the hell")//!debug
     append_popup({
       content: (index) => (
         <NoteEditor
@@ -786,7 +776,6 @@ function App() {
         />
       ),
     });
-  console.log("what the hell2")//!debug
   }
   function goToApiSelect() {
     if (_is_updating_data) {
@@ -850,6 +839,7 @@ function App() {
     let upstream_notes=[];
     let collisions=[];
     let new_upstream=[];
+    let replaced_local=0;
     [local_state, upstream_notes] = await request_all_data(local_state);
     upstream_notes.forEach((note) => {
       let id = note._id;
@@ -860,13 +850,13 @@ function App() {
           html_log(["duplicate id, name: ", note.name]);
           throw "duplicate id";
         }
-        note._id = { $oid: id };
-        if(!notes_equal(note,local_notes[i])){
+        if(!notes_equal(note,local_notes[i].note)){
           if(diff_exists[i]){
+            note._id = { $oid: id };//~need for send
             collisions.push(note);
           }else{
-            note._id=id;//~dislay note is not supposed to have $oid
             local_notes[i]=new_outer_shell(note);//~inner (json) note is not valid for display
+            replaced_local++;
           }
           upstream_exists[i]=true;
         }
@@ -878,6 +868,9 @@ function App() {
       html_log(["collisions detected, count: ", collisions.length]);
       //~false because upstream deletion is handled by update
       local_state = await deleteNotes(collisions, local_state, "COLLISION", false, push_date);
+    }
+    if(replaced_local>0){
+      html_log(["local notes replaced: ", replaced_local]);
     }
     //OR between upstream_exists and diff_exists because local diff overwrites abscence of upstream
     return [local_state, local_notes, upstream_exists.map((x,i)=>x||diff_exists[i]), new_upstream];
@@ -1017,7 +1010,6 @@ function App() {
 }
 
 function Popup({ zIndex, children }) {
-  console.log("rendering popup", zIndex);//!debug
   return (
     <div
       className="popup_background"

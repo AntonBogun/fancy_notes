@@ -286,3 +286,21 @@
 
     //   console.log("clicked note: (pos, name)", pos, notes[pos].note.name);
     // }
+  //~ saveAndClose
+    // notesToSave.forEach(([outer, i]) => {
+    //   let [priority, failed, err] = construct_priority(outer);
+    //   if (failed) {
+    //     console.error("failed to construct priority for note " + i + ": ", err);
+    //     html_log(["failed to construct priority for note " + i + ": ", err]);
+    //   }
+    //   local_notes[i] = { ...outer, priority: priority, failed: failed };
+    // });
+    // local_notes = local_notes.filter((x, i) => delete_on_false[i]);
+    // new_append=new_append.map((outer)=>{
+    //   let [priority, failed, err] = construct_priority(outer);
+    //   if (failed) {
+    //     console.error(`failed to construct priority for new note, name - ${outer.name}: `, err);
+    //     html_log([`failed to construct priority for new note, name - ${outer.name}: `, err]);
+    //   }
+    //   return { ...outer, priority: priority, failed: failed };
+    // });
