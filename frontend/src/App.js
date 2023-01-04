@@ -5,15 +5,15 @@ import ProgressBar from "react-bootstrap/ProgressBar";
 import * as _React from "react";
 import axios from "axios";
 import CodeEditor from "@uiw/react-textarea-code-editor";
-// import { transform } from "@babel/standalone";
-function transform(code, options) {
-  return { code: "React.createElement('div', null, 'PLACEHOLDER')" };
-}
+import { transform } from "@babel/standalone";
+// function transform(code, options) {//faster compile
+//   return { code: "()=>React.createElement('div', null, 'PLACEHOLDER')" };
+// }
 function transpile(code) {
   return transform(code, { plugins: ["transform-react-jsx"] }).code;
 }
 const React = _React; //React is not defined in eval
-const useState = _React.useState;//allows direct access in eval
+const useState = _React.useState; //allows direct access in eval
 const useEffect = _React.useEffect;
 const useRef = _React.useRef;
 
@@ -72,7 +72,38 @@ let _db_resolve_func = null;
 let _db_reject_func = null; //needed to cancel promise
 
 function is_code_valid(code) {
-  return !!(typeof(code)==="string" && code.trim())
+  return !!(typeof code === "string" && code.trim());
+}
+
+function notes_equal(x, y) {//~implied that x and y have both been stringified and parsed
+  if (x === y) return true;
+  // if both x and y are null or undefined and exactly the same
+  if (!(x instanceof Object) || !(y instanceof Object)) return false;
+  // if they are not strictly equal, they both need to be Objects
+  if (x.constructor !== y.constructor) return false;
+  // they must have the exact same prototype chain, the closest we can do is
+  // test there constructor.
+  for (var p in x) {
+    if (!x.hasOwnProperty(p)) continue;
+    // other properties were tested using x.constructor === y.constructor
+    if (!y.hasOwnProperty(p)) return false;
+    // allows to compare x[ p ] and y[ p ] when set to undefined
+    if (x[p] === y[p]) continue;
+    // if they have the same strict value or identity then they are equal
+    if (typeof x[p] !== "object") return false;
+    // Numbers, Strings, Functions, Booleans must be strictly equal
+    if (!notes_equal(x[p], y[p])) return false;
+    // Objects and Arrays must be tested recursively
+  }
+  //second loop not needed because undefined is removed in json
+  return true;
+}
+function process_json(obj) {
+  try{
+    return [JSON.parse(JSON.stringify(obj)), false, null];
+  }catch(e){
+    return [null, true, e];
+  }
 }
 
 function App() {
@@ -96,7 +127,7 @@ function App() {
   // function updateState(state_changes) {
   //   setState({ ...state, ...state_changes });
   // }
-  function html_log(obj, state_changes = {}) {
+  function html_log(obj) {
     //delete first element if more than 50 lines
     setHtmlLogList((prev) => {
       let new_list = Array.isArray(obj) ? prev.concat(obj.map((x) => x.toString())) : prev.concat(obj.toString());
@@ -136,7 +167,7 @@ function App() {
           console.log("no apikey and appid found, rolling back to local storage");
         }
       } catch (e) {
-        console.log(e);
+        console.error(e);
         html_log(e);
       }
     }
@@ -195,23 +226,56 @@ function App() {
       _id: { $oid: outer.note._id }, //$oid is required by mongodb
       type: "NOTE",
       name: outer.note.name,
-      desc: outer.note.desc,
-      _priority_c: outer.note.data._priority_c,
-      _settings_c: outer.note.data._settings_c,
-      _jsonify_c: outer.note.data._jsonify_c,
-      _auto: outer.note.data._auto,
+      description: outer.note.description,
+      ignore: outer.note.ignore,
+      data: {
+        _priority_c: outer.note.data._priority_c,
+        _settings_c: outer.note.data._settings_c,
+        _jsonify_c: outer.note.data._jsonify_c,
+        _auto: outer.note.data._auto,
+      },
     };
   }
+  function try_jsonify(f, outer) {
+    let json = null;
+    try {
+      json = f(outer);
+    } catch (e) {
+      return [null, true, e];
+    }
+    if (typeof json !== "object") return [null, true, `json not an object, got ${typeof json}`];
+    if (typeof json._id !== "object" || typeof json._id.$oid !== "string")
+      return [null, true, `id not an object with $oid string, got ${typeof json._id} with ${typeof json._id.$oid}`];
+    if (typeof json.type !== "string") return [null, true, `type not a string, got ${typeof json.type}`];
+    if (typeof json.name !== "string") return [null, true, `name not a string, got ${typeof json.name}`];
+    if (typeof json.description !== "string")
+      return [null, true, `description not a string, got ${typeof json.description}`];
+    if (typeof json.data !== "object") return [null, true, `data not an object, got ${typeof json.data}`];
+    if (typeof json.data._priority_c !== "string")
+      return [null, true, `data._priority_c not a string, got ${typeof json.data._priority_c}`];
+    if (typeof json.data._settings_c !== "string")
+      return [null, true, `data._settings_c not a string, got ${typeof json.data._settings_c}`];
+    if (typeof json.data._jsonify_c !== "string")
+      return [null, true, `data._jsonify_c not a string, got ${typeof json.data._jsonify_c}`];
+    if (typeof json.data._auto !== "object")
+      return [null, true, `data._auto not an object, got ${typeof json.data._auto}`];
+    try {
+      return [json, false, null]; //~not out because modifications need to be made on send
+    } catch (e) {
+      return [null, true, e];
+    }
+  }
+  //~does NOT return outer, only inner
   async function request_all_data(local_state, cancel_token = null) {
     //=stateless, *mutates* state, may push date, throws
     try {
-      let response = await db_request(local_state, "find", {}, cancel_token);
+      let response = await db_request(local_state, "find", {filter:{$or:[{ignore:""},{type:"DATE"}]}}, cancel_token);
       let data = JSON.parse(response.data);
       let new_notes = data.documents
         .filter((note) => note.type === "NOTE")
-        .map((note) => {
-          return new_outer_shell(note);
-        });
+        // .map((note) => {
+        //   return new_outer_shell(note);
+        // });
       let date = data.documents.filter((note) => note.type === "DATE");
       if (date.length === 0) {
         console.log("no date found, creating new one");
@@ -274,35 +338,14 @@ function App() {
     }
   }
 
-  async function save_all_data(local_state, local_notes) {
-    //=stateless, *mutates* state, pushes notes and date, throws
-    let to_save = local_notes.map((outer) => outer.jsonify(outer));
-    try {
-      await db_request(local_state, "deleteMany", { filter: { _id: { $in: to_save.map((x) => x._id) } } });
-      try {
-        await db_request(local_state, "insertMany", { documents: to_save });
-        console.log("saved data");
-        // html_log("saved data");
-        return push_current_date(local_state);
-      } catch (error) {
-        console.error("!!!!!!!failed to save data!!!!!!!");
-        html_log("!!!!!!!failed to save data, something is *very* wrong!!!!!!!");
-        throw error;
-      }
-    } catch (error) {
-      console.error("!failed to delete old data!");
-      html_log("!failed to delete old data, something is very wrong!");
-      throw error;
-    }
-  }
-
   function new_inner_note() {
     //=trivially stateless
     return {
       // _id: "", //cannot be set, must be received from database
       type: "NOTE",
-      name: "",
-      desc: "",
+      name: "new note",
+      description: "",
+      ignore: "",//when non-empty, note is ignored, used for collisions and deletion
       data: {
         _priority_c: "",
         _settings_c: "",
@@ -318,7 +361,7 @@ function App() {
       failed: false,
       val: 100,
       priority: (outer, pos, notes) => 100,
-      settings: ({outer,pos,notes}) => <></>,
+      settings: ({ outer, pos, notes }) => <></>,
       jsonify: default_jsonify,
       note: inner,
     };
@@ -336,42 +379,78 @@ function App() {
   // settings() : after transpiling and evaluating _settings_c
   // jsonify() : after evaluating _jsonify_c
   // note : *actual note data*
-  function construct_priority(outer) {//~evalutes in the correct context
+  function construct_priority(outer) {
+    //~evalutes in the correct context
     //=stateless
-    let priority = (outer, pos, notes) => 100;
+    let default_priority = (outer, pos, notes) => 100;
     try {
       if (is_code_valid(outer.note.data._priority_c)) {
-        priority = eval(outer.note.data._priority_c);
+        let priority = eval(outer.note.data._priority_c);
+        if (typeof priority !== "function") {
+          return [default_priority, true, "priority is not a function"];
+        }
+        return [priority, false, null];
       }
-      return [priority, false, null];
+      return [default_priority, false, null];
     } catch (error) {
-      return [priority, true, error];
+      return [default_priority, true, error];
     }
   }
   function construct_all_priorities(local_notes) {
     //=stateless
     return local_notes.map((outer, i) => {
-      let [priority, failed, err] = construct_priority(outer.note.data._priority_c);
+      // console.log("before, outer; construct_priority:", outer, construct_priority)//!debug
+      let [priority, failed, err] = construct_priority(outer);
+      // let result=construct_priority(outer); //!debug
+      // console.log("result",result)//!debug
+      // let [priority, failed, err] = result;//!debug
+      // console.log("after")//!debug
       if (failed) {
         console.error("failed to construct priority for note " + i + ": ", err);
-        html_log("failed to construct priority for note " + i + ": " + err);
+        html_log(["failed to construct priority for note " + i + ": ", err]);
       }
-      return { ...note, priority: priority, failed: failed };
+      return { ...outer, priority: priority, failed: failed };
     });
   }
   function construct_jsonify(outer) {
     //=stateless
-    let jsonify = default_jsonify;
     try {
       if (is_code_valid(outer.note.data._jsonify_c)) {
-        jsonify=eval(outer.note.data._jsonify_c);
+        let jsonify = eval(outer.note.data._jsonify_c);
+        if (typeof jsonify !== "function") {
+          return [default_jsonify, true, "jsonify is not a function"];
+        }
+        return [jsonify, false, null];
       }
-      return [jsonify, false, null];
+      return [default_jsonify, false, null];
     } catch (error) {
-      return [jsonify, true, error];
+      return [default_jsonify, true, error];
     }
   }
-  //*construct_all_jsonifies is not needed because it is only used for the notes that are being saved
+  //*construct_all_jsonifies is not present unlike construct_all_priorities because there isn't such a thing as 
+  //*a failed property for jsonify
+
+  function try_full_jsonify(outer) {
+    let [jsonify, failed, err] = construct_jsonify(outer);
+    if (failed) {
+      console.error(`failed to construct jsonify function for note, name: ${outer.note.name}, id: ${outer.note._id}`, err);
+      html_log([`failed to construct jsonify function for note, name: ${outer.note.name}, id: ${outer.note._id}`, err]);
+      return [null, true, err];
+    }
+    let [_json_pre, failed2, err2] = try_jsonify(jsonify, outer);
+    if (failed2) {
+      console.error(`failed to jsonify note, name: ${outer.note.name}, id: ${outer.note._id}`, err2);
+      html_log([`failed to jsonify note, name: ${outer.note.name}, id: ${outer.note._id}`, err2]);
+      return [null, true, err2];
+    }
+    let [json, failed3, err3] = process_json(_json_pre);//ensures no error during stringify
+    if (failed3) {
+      console.error(`failed to process json for note, name: ${outer.note.name}, id: ${outer.note._id}`, err3);
+      html_log([`failed to process json for note, name: ${outer.note.name}, id: ${outer.note._id}`, err3]);
+      return [null, true, err3];
+    }
+    return [json, false, null];
+  }
 
   // re-evaluate priorities every second, and sort based on resulting values
   // if a note's settings are being accessed, prevent update
@@ -404,7 +483,7 @@ function App() {
         val = Math.max(0, Math.min(100, val));
         // if (failed) {
         //   console.error("failed to update priority for note " + i + ": ", err);
-        //   html_log("failed to update priority for note " + i + ": " + err);
+        //   html_log(["failed to update priority for note " + i + ": ", err]);
         // }
         return { ...outer, val: val, failed: failed };
       })
@@ -417,6 +496,9 @@ function App() {
     // ~the launch of intervals is not immediate
     //autoupdate order every second
     function sort_interval() {
+      if (_sort_timeout_id) {
+        clearTimeout(_sort_timeout_id);//because in dev, app is rendered twice
+      }
       _sort_timeout_id = setTimeout(() => {
         //time the execution and if it takes too long, log it
         let start = Date.now();
@@ -431,6 +513,9 @@ function App() {
     }
 
     function db_check_interval() {
+      if (_db_timeout_id) {
+        clearTimeout(_db_timeout_id);
+      }
       _db_timeout_id = setTimeout(async () => {
         //create promise
         let promise = new Promise((resolve, reject) => {
@@ -449,10 +534,8 @@ function App() {
             console.log("db_check_interval canceled");
             html_log("db_check_interval canceled");
           } else {
-            console.error("failed to check for updates");
-            html_log("failed to check for updates");
-            console.error(error);
-            html_log(error);
+            console.error("failed to check for updates", error);
+            html_log(["failed to check for updates", error]);
             // db_check_interval();
           }
         }
@@ -481,9 +564,9 @@ function App() {
       [local_state, new_date] = await get_last_db_update_date(local_state, _db_cancel_token);
       _db_cancel_token = null;
       console.log("db update date: ", new_date); //!debug
-      console.log("local date: ", original_state.last_db_update_date); //!debug
-      console.log("new date > local date: ", new_date > original_state.last_db_update_date); //!debug
-      if (new_date > original_state.last_db_update_date) {
+      console.log("local date: ", local_state.last_db_update_date); //!debug
+      console.log("new date > local date: ", new_date > local_state.last_db_update_date); //!debug
+      if (new_date > local_state.last_db_update_date) {
         console.log("new updates found, stopped updates, locked settings and reloading"); //!debug
         _is_updating_data = true;
         stop_autoupdate();
@@ -522,6 +605,7 @@ function App() {
     try {
       setDisplayNotes(true);
       [local_state, new_notes] = await request_all_data(local_state);
+      new_notes=new_notes.map(new_outer_shell);
       new_notes = construct_all_priorities(new_notes);
       new_notes = update_order(new_notes);
       setNotes(new_notes);
@@ -531,10 +615,8 @@ function App() {
       start_autoupdate();
     } catch (e) {
       // setDisplayNotes(false);
-      console.error("failed to reload data, rolling back to input");
-      html_log("failed to reload data, rolling back to input");
-      console.error(e);
-      html_log(e);
+      console.error("failed to reload data, rolling back to input", e);
+      html_log(["failed to reload data, rolling back to input", e]);
       rollback_to_input(local_state);
     }
   }
@@ -546,38 +628,45 @@ function App() {
     setState(local_state);
   }
 
-  function f() {
-  }
+  function f() {}
 
   function append_popup(data) {
+    console.log("appending popup")//!debug
     setPopupStack((stack) => [...stack, data]);
   }
 
-  function append_multi_popup_raw(title, options, maxHeightPercent=50){
+  function append_multi_popup_raw(title, options, maxHeightPercent = 50) {
     append_popup({
       content: (index) => <MultiOptionPopup title={title} options={options} maxHeightPercent={maxHeightPercent} />,
     });
   }
   //=automatically pops the popup after clicking yes or no
   //~NOTE: does not automatically stop and restart auto-update, or check _is_updating_data
-  function append_multi_popup(title, options, maxHeightPercent=50) {
+  function append_multi_popup(title, options, maxHeightPercent = 50) {
     let close_and = (func) => {
       return () => {
         pop_popup();
         func();
       };
     };
-    append_multi_popup_raw(title, options.map((option) => {
-      return {
-        ...option,
-        onClick: close_and(option.onClick),
-      };
-    }), maxHeightPercent);
+    append_multi_popup_raw(
+      title,
+      options.map((option) => {
+        return {
+          ...option,
+          onClick: close_and(option.onClick),
+        };
+      }),
+      maxHeightPercent
+    );
   }
   //=automatically pops the popup after clicking yes or no
   //~NOTE: does not automatically stop and restart auto-update, or check _is_updating_data
   function append_yes_no_popup(title, no, onNo, yes, onYes) {
-    append_multi_popup(title,[{text: no, onClick: onNo}, {text: yes, onClick: onYes}]);
+    append_multi_popup(title, [
+      { text: no, onClick: onNo },
+      { text: yes, onClick: onYes },
+    ]);
   }
 
   function pop_popup() {
@@ -588,62 +677,320 @@ function App() {
   function clear_popups() {
     setPopupStack([]);
   }
+
+  async function saveAndClose(notesToSave) {
+    if (_is_updating_data) {
+      html_log("cannot save while updating data");
+      return;
+    }
+    _is_updating_data = true;
+    let local_state = { ...state };
+    let local_notes = [...notes];
+    //=stateless, *mutates* state, pushes notes and date, throws
+    try {
+      let jsonified_notes = notesToSave.map(([outer, i]) => {
+        let [json, failed, err] = try_full_jsonify(outer)
+        if (failed) {
+          console.error("failed to jsonify note " + i + ": ", err);
+          html_log(["failed to jsonify note " + i + ": ", err]);
+          throw err;
+        }
+        return json;
+      });
+      // returns:[local_state, local_notes, upstream_exists, new_upstream];
+      // collisionHandle(jsonified_notes, local_state, local_notes, false);//do not push date
+      let delete_on_false=[];
+      let new_append=[];
+      // debugger;
+      try{
+        [local_state, local_notes, delete_on_false, new_append] = await collisionHandle(jsonified_notes, local_state, local_notes, false);//do not push date
+      }catch(e){
+        console.error("failed to handle collision: ", e);
+        html_log(["failed to handle collision: ", e]);
+        throw e;
+      }
+      try {
+        //~ all notes are expected to already have _id
+        await db_request(local_state, "deleteMany", { filter: { _id: { $in: jsonified_notes.map((x) => x._id) } } });
+        try {
+          await db_request(local_state, "insertMany", { documents: jsonified_notes });
+          console.log("saved data");
+          // html_log("saved data");
+          local_state = await push_current_date(local_state);
+          notesToSave.forEach(([outer, i]) => {
+            let [priority, failed, err] = construct_priority(outer);
+            if (failed) {
+              console.error("failed to construct priority for note " + i + ": ", err);
+              html_log(["failed to construct priority for note " + i + ": ", err]);
+            }
+            local_notes[i] = { ...outer, priority: priority, failed: failed };
+          });
+          local_notes = local_notes.filter((x, i) => delete_on_false[i]);
+          new_append=new_append.map((outer)=>{
+            let [priority, failed, err] = construct_priority(outer);
+            if (failed) {
+              console.error(`failed to construct priority for new note, name - ${outer.name}: `, err);
+              html_log([`failed to construct priority for new note, name - ${outer.name}: `, err]);
+            }
+            return { ...outer, priority: priority, failed: failed };
+          });
+          local_notes = local_notes.concat(new_append);
+          setNotes(update_order(local_notes));
+          setState(local_state);
+          clear_popups();
+          start_autoupdate();
+        } catch (e) {
+          console.error("failed to save data!!!", e);
+          html_log(["failed to save data!!!", e]);
+        }
+      } catch (e) {
+        console.error("failed to delete old data", e);
+        html_log(["failed to delete old data", e]);
+      }
+    } catch (e) {
+      console.error("failed to encode data", e);
+      html_log(["failed to encode data", e]);
+    }
+    _is_updating_data = false;
+  }
+
   function onNoteClick(pos) {
     if (_is_updating_data) {
       html_log("Cannot edit while updating data");
       return;
     }
     stop_autoupdate();
+    console.log("what the hell")//!debug
     append_popup({
-      content: (index) => <NoteEditor pos={pos} origin_notes={notes} 
-      closeWithoutSaving={()=>{}}//**works because NoteEditor creates a new copy of notes therefore simply closing it will not affect the original notes
-      saveAndClose={}
-      _public={{//_public passes functions to NoteEditor
-        append_yes_no_popup,
-        append_multi_popup_raw,
-        append_multi_popup,
-        construct_priority,
-        pop_popup
-      }}
-       />,
+      content: (index) => (
+        <NoteEditor
+          pos={pos}
+          origin_notes={notes}
+          closeWithoutSaving={() => {
+            clear_popups();
+            start_autoupdate();
+          }} //**works because NoteEditor creates a new copy of notes therefore simply closing it will not affect the original notes
+          saveAndClose={saveAndClose}
+          onDeleteNote={()=>onDeleteNote(pos)}
+          _public={{
+            //_public passes functions to NoteEditor
+            append_yes_no_popup,
+            append_multi_popup_raw,
+            append_multi_popup,
+            construct_priority,
+            construct_jsonify,
+            try_jsonify,
+            pop_popup,
+            html_log,
+          }}
+        />
+      ),
     });
+  console.log("what the hell2")//!debug
+  }
+  function goToApiSelect() {
+    if (_is_updating_data) {
+      html_log("Cannot reset while updating data");
+      return;
+    }
+    stop_autoupdate();
+    append_yes_no_popup(
+      "Go back to selecting appid and apikey?",
+      "No",
+      start_autoupdate,
+      "Yes",
+      () => {
+        rollback_to_input(state);
+      }
+    );
+  }
+  async function deleteNotes(json_to_delete, local_state, reason, deleteUpstream=true, push_date=true) {
+    //~does not actually delete but rather replace with different id and change "ignore" field
+    let curr_date = new Date();
+    let to_delete_ids = json_to_delete.map((json) => json._id);
+    json_to_delete.forEach((json)=>{
+      //remove id and add ignore field
+      let id = json._id.$oid;
+      delete json._id;
+      json.ignore = `${reason};${curr_date.toISOString()};${id}`;
+    });
+    await db_request(local_state, "insertMany", { documents: json_to_delete });
+    if (deleteUpstream)
+    await db_request(local_state, "deleteMany", { filter: { _id: { $in: to_delete_ids } } });
+    if (push_date)
+      return await push_current_date(local_state);
+    return local_state;
+  }
+  //~does not updateOrder or replace diffs, only replaces locally and inserts upstream in case of update/collision
+  //~also returns bool del array and new notes array
+  //~throws
+  async function collisionHandle(jsoned_diffs, local_state, local_notes, push_date=true) {
+    let lookup = {};
+    let diff_exists=Array(local_notes.length).fill(false);
+    let upstream_exists=Array(local_notes.length).fill(false);
+    local_notes.map((note)=>{
+      let [json, failed, err] = try_full_jsonify(note);
+      if (failed) {
+        console.error("failed to jsonify note: ", err);
+        html_log(["failed to jsonify note: ", err]);
+        throw err;
+      }
+      return json;
+    }).forEach((note, i) => {
+      lookup[note._id.$oid] = i;
+    });
+    jsoned_diffs.forEach((diff) => {
+      if (lookup.hasOwnProperty(diff._id.$oid)) {
+        diff_exists[lookup[diff._id.$oid]]=true;
+      }else{
+        console.error("new id not expected: ", diff);
+        html_log(["new id not expected, name: ", diff.name]);
+      }
+    });
+    let upstream_notes=[];
+    let collisions=[];
+    let new_upstream=[];
+    [local_state, upstream_notes] = await request_all_data(local_state);
+    upstream_notes.forEach((note) => {
+      let id = note._id;
+      if (lookup.hasOwnProperty(id)) {//received note does not use $oid
+        let i = lookup[id];
+        if(upstream_exists[i]){
+          console.error("duplicate id: ", note);
+          html_log(["duplicate id, name: ", note.name]);
+          throw "duplicate id";
+        }
+        note._id = { $oid: id };
+        if(!notes_equal(note,local_notes[i])){
+          if(diff_exists[i]){
+            collisions.push(note);
+          }else{
+            note._id=id;//~dislay note is not supposed to have $oid
+            local_notes[i]=new_outer_shell(note);//~inner (json) note is not valid for display
+          }
+          upstream_exists[i]=true;
+        }
+      }else{
+        new_upstream.push(new_outer_shell(note));
+      }
+    });
+    if(collisions.length>0){
+      html_log(["collisions detected, count: ", collisions.length]);
+      //~false because upstream deletion is handled by update
+      local_state = await deleteNotes(collisions, local_state, "COLLISION", false, push_date);
+    }
+    //OR between upstream_exists and diff_exists because local diff overwrites abscence of upstream
+    return [local_state, local_notes, upstream_exists.map((x,i)=>x||diff_exists[i]), new_upstream];
+  }
+  async function onAddNewNote() {
+    let local_state = { ...state };
+    let local_notes = [...notes];
+    if (_is_updating_data) {
+      html_log("Cannot add new note while updating data");
+      return;
+    }
+    stop_autoupdate();
+    _is_updating_data = true;
+    let new_date=null;
+    try{
+      [local_state, new_date] = await get_last_db_update_date(local_state, _db_cancel_token);
+      if (new_date > local_state.last_db_update_date) {
+        html_log("new updates in db found, add new note cancelled, reloading");
+        await full_reload(local_state);
+        _is_updating_data = false;
+        return;
+      }
+    }catch(err){
+      console.error("sync to db failed on add new note", err);
+      html_log(["sync to db failed on add new note", err]);
+      start_autoupdate();
+      _is_updating_data = false;
+      return;
+    }
+    try {
+      let new_note = new_inner_note();
+      let response = await db_request(local_state, "insertOne", { document: new_note });
+      let data = JSON.parse(response.data);
+      if (data.insertedId) {
+        new_note._id = data.insertedId;
+        local_state = await push_current_date(local_state);
+        new_note= new_outer_shell(new_note);
+        setNotes(update_order([...notes, new_note]));
+        setState(local_state);
+        start_autoupdate();
+      } else {
+        console.error("no insertedId returned, something is wrong with the database");
+        html_log("no insertedId returned, something is wrong with the database");
+      }
+    } catch (e) {
+      console.error("failed to add new note", e);
+      html_log(["failed to add new note", e]);
+    }
+    _is_updating_data = false;
+  }
+
+  function onDeleteNote(pos){
+    append_yes_no_popup(
+      <>Are you sure you want to delete this note?<br/>
+      Any unsaved changes will be lost.</>,
+      "No",() => {},
+      "Yes", async () => {
+        if (_is_updating_data) {
+          html_log("Cannot delete while updating data");
+          return;
+        }
+        _is_updating_data = true;
+        let local_state={...state};
+        try{
+          let new_date=null;
+          [local_state, new_date] = await get_last_db_update_date(local_state);
+          if (new_date > local_state.last_db_update_date) {
+            html_log("new updates found, delete cancelled, reloading");
+            _is_updating_data = true;
+            clear_popups();
+            await full_reload(local_state);
+            _is_updating_data = false;
+            return;
+          }
+        }catch(e){
+          console.error("failed to get last db update date on delete", e);
+          html_log(["failed to get last db update date on delete", e]);
+          _is_updating_data = false;
+          return;
+        }
+        let [json, failed, err] = try_full_jsonify(notes[pos]);
+        if (failed) {
+          console.error("failed to jsonify note on delete " + pos + ": ", err);
+          html_log(["failed to jsonify note on delete " + pos + ": ", err]);
+          return;
+        }
+        try{
+          local_state=await deleteNotes([json], local_state, "DELETED");
+          setNotes(update_order(notes.filter((_, i) => i !== pos)));
+          setState(local_state);
+          clear_popups();
+          start_autoupdate();
+        }catch(e){
+          console.error("failed to delete note", e);
+          html_log(["failed to delete note", e]);
+        }
+        _is_updating_data = false;
+      }
+    )
   }
 
   return (
     <div className="App" style={state.transparent ? { backgroundColor: "transparent" } : {}}>
-      <div className="log_remainder" style={{ flex: 1, overflowY: "auto" }}>
+      <div className="log_remainder" style={{ flex: 1, overflowY: "auto", position: "relative" }}>
         {displayNotes ? (
           <>
-            <Notes
-              data={notes}
-              func={f}
-              resetFunc={() => {
-                if (_is_updating_data) {
-                  html_log("Cannot reset while updating data");
-                  return;
-                }
-                stop_autoupdate();
-                append_yes_no_popup(
-                  "Go back to selecting appid and apikey? This will erase all notes.",
-                  "No",
-                  start_autoupdate,
-                  "Yes",
-                  () => {
-                    rollback_to_input(state);
-                  }
-                );
-              }}
-              onNoteClick={(pos) => {
-                if (_is_updating_data) {
-                  html_log("Cannot change notes while updating data");
-                  return;
-                }
-
-                console.log("clicked note: (pos, name)", pos, notes[pos].note.name);
-              }}
-            />
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <button onClick={onAddNewNote}>Add New Note</button>
+              <button onClick={goToApiSelect}>Go Back To Api Select</button>
+            </div>
+            <Notes data={notes} onNoteClick={onNoteClick} />
             {popupStack.map((data, index) => (
-              <Popup zIndex={index + 1}>{data.content(index)}</Popup>
+              <Popup zIndex={index + 1} key={index}>{data.content(index)}</Popup>
             ))}
           </>
         ) : (
@@ -670,6 +1017,7 @@ function App() {
 }
 
 function Popup({ zIndex, children }) {
+  console.log("rendering popup", zIndex);//!debug
   return (
     <div
       className="popup_background"
@@ -705,8 +1053,8 @@ function Popup({ zIndex, children }) {
   );
 }
 
-
-function MultiOptionPopup({ title, options, maxHeightPercent=50 }) {//horizontal stack
+function MultiOptionPopup({ title, options, maxHeightPercent = 50 }) {
+  //horizontal stack
   return (
     <div
       className="multi_option_popup"
@@ -720,7 +1068,7 @@ function MultiOptionPopup({ title, options, maxHeightPercent=50 }) {//horizontal
       }}
     >
       {/* center text */}
-      <div className="multi_option_title" style={{ maxHeight: `${maxHeightPercent}%`,  overflow: "auto" }}>
+      <div className="multi_option_title" style={{ maxHeight: `${maxHeightPercent}%`, overflow: "auto" }}>
         {title}
       </div>
       <div
@@ -735,8 +1083,8 @@ function MultiOptionPopup({ title, options, maxHeightPercent=50 }) {//horizontal
           overflow: "auto",
         }}
       >
-        {options.map((option) => (
-          <button className="option_button" style={{ flex: 1 }} onClick={option.onClick}>
+        {options.map((option,i) => (
+          <button className="option_button" style={{ flex: 1 }} onClick={option.onClick} key={i}>
             {option.text}
           </button>
         ))}
@@ -744,7 +1092,6 @@ function MultiOptionPopup({ title, options, maxHeightPercent=50 }) {//horizontal
     </div>
   );
 }
-
 
 function ApiInfoInput({ onChange, apikey, appid, request }) {
   return (
@@ -762,20 +1109,12 @@ function ApiInfoInput({ onChange, apikey, appid, request }) {
   );
 }
 
-function Notes({ data, func, resetFunc, onNoteClick }) {
+function Notes({ data, onNoteClick }) {
   if (data.length === 0) {
     return <div className="notes">Loading...</div>;
   }
   return (
     <div className="notes">
-      {/*  */}
-      <table>
-        <tr>
-          <button onClick={func}>func</button>
-          <button onClick={resetFunc}>reset</button>
-        </tr>
-      </table>
-      <br />
       {data.map((outer, i) => (
         // <div key={i}>{JSON.stringify(note)}</div>
         <Note key={i} data={outer} onClick={() => onNoteClick(i)} />
@@ -859,12 +1198,12 @@ function Note({ data, onClick }) {
   }
 }
 
-function NoteEditor({ pos, origin_notes, closeWithoutSaving, saveAndClose, _public }) {
+function NoteEditor({ pos, origin_notes, closeWithoutSaving, saveAndClose, onDeleteNote, _public }) {
   const [notes, setNotes] = useState([...origin_notes]);
   const [outer, setOuter] = useState(notes[pos]);
   const [viewState, setViewState] = useState(0);
   const [err, setErr] = useState({ hasError: false, error: null, onEval: false });
-  const [CustomSettings, setCustomSettings] = useState(() => (({outer,pos,notes}) => <></>)); //two layers because counts as constructor
+  const [CustomSettings, setCustomSettings] = useState(() => ({ outer, pos, notes }) => <></>); //two layers because counts as constructor
   const [reloadSettingsState, setReloadSettingsState] = useState(0);
   function reloadSettings() {
     setReloadSettingsState(reloadSettingsState + 1);
@@ -878,15 +1217,19 @@ function NoteEditor({ pos, origin_notes, closeWithoutSaving, saveAndClose, _publ
       console.error("note contains unserializable data");
       console.error("HANDLING NOT IMPLEMENTED");
       console.error(e);
-      html_log("note contains unserializable data");
-      html_log(e);
+      _public.html_log(["note contains unserializable data", e]);
       return <div>note contains unserializable data</div>; //!supposed to dump note data
     }
   }, [pos, origin_notes]);
 
   useEffect(() => {
     try {
+      if (!is_code_valid(outer.note.data._settings_c)) {
+        setCustomSettings(() => ({ outer, pos, notes }) => <></>);
+        return;
+      }
       let newCustomSettings = eval(transpile(outer.note.data._settings_c));
+      if (typeof newCustomSettings !== "function") throw new Error("custom settings must be a function");
       setCustomSettings(() => newCustomSettings);
       setErr({ hasError: false, error: null, onEval: false });
     } catch (e) {
@@ -901,40 +1244,136 @@ function NoteEditor({ pos, origin_notes, closeWithoutSaving, saveAndClose, _publ
   }
   function askClose() {
     _public.append_multi_popup("Close?", [
-      {text:"Cancel",onClick:()=>{}},
-      {text:"Close without saving", onClick:closeWithoutSaving},
-      {text:"Save and close", onClick:()=>{saveAndClose(encodeNotes());}}
+      { text: "Cancel", onClick: () => {} },
+      { text: "Close without saving", onClick: closeWithoutSaving },
+      {
+        text: "Save and close",
+        onClick: () => {
+          saveAndClose(getToSaveNotes());
+        },
+      },
     ]);
   }
   function showInfo() {
     _public.append_multi_popup(
-    <>
-      <h3>Info</h3>
-      <p>
-        Notes are sorted based on their value that is calculated by the note's priority function.<br/>
-        Each note can have a value anywhere from 0 to 100, and the function is evaluated every second.<br/>
-        The structure of a given note is as follows:<br/>
-        <code>outer: {'{'}*constructed functions*,val:num,failed:bool,<br/>
-        note:{'{'}name:str,description:str, data:{'{'}_auto:object, all fields are saved automatically{'}'}{'}'}{'}'}</code><br/>
-        NOTE: there may not be any functions within the <code>note</code> object, otherwise it will not be possible to copy it and it will throw an error (notes cannot be saved in the database!).<br/>
-        The <code>outer</code> object should also not contain any other field that is not copiable with spread operator.
-      </p>
-      <p>
-        Priority function should not modify any field.<br/>
-        Settings function has to <i>return</i> a React component function which follows all the same restrictions (i.e. must be a function and start with uppercase letter) but also same functionalities (i.e. using <code>useState</code> and <code>useEffect</code>) as a normal component function.<br/>
-        It is allowed to modify fields of the note, but only indirectly using <code>fullCopyOuter()</code> or manual spread syntax (not recommended).<br/>
-        It is also possible to modify other notes from the settings function, but it is required to use <code>addDependency(index/indices)</code> and to copy over the note fields with <code>fullCopyNote(index/indices)</code>.<br/>
-        (Note: if addDependency or a copy function fails due to unserializable data, it will <code>throw "unserializable"</code>)<br/>
-        The settings function has props input of the main note, index of the main note, and the array of all notes.<br/>
-        While the main note is present in the array of all notes, it is separate from the main note that is passed and it will be replaced by the one that is passed to the settings function.<br/>
-        This is to avoid unnecessary copying of the whole array of notes for every single change of the main note.<br/>
-        The relevant update methods for the main note and note array are <code>setOuter</code> and <code>setNote(index/indices,note(s))</code>.
-      </p>
-      <p>
-        The settings function also has access to the local variables of NoteEditor, specifically <code>_public</code> object which contains useful functions for creating popups (for more info see <code>append_multi_popup</code> and <code>append_yes_no_popup</code> in <code>App.js</code>).
-      </p>
-    </>,
-    [{text:"Close",onClick:()=>{}}]);
+      <>
+        <h2>Info</h2>
+        <p>
+          Notes are sorted based on their value that is calculated by the note's priority function.
+          <br />
+          Each note can have a value anywhere from 0 to 100, and the function is evaluated every second.
+          <br />
+          The structure of a given note is as follows:
+          <br />
+          <code>
+            outer: {"{"}*constructed functions*,val:num,failed:bool,
+            <br />
+            note:{"{"}name:str,description:str, data:{"{"}_auto:object (all fields are saved automatically),
+            _priority_c, _settings_c, _jsonify_c{"}"}
+            {"}"}
+            {"}"}
+          </code>
+          <br />
+          NOTE: there may not be any functions within the <code>note</code> object, otherwise it will not be possible to
+          copy it and it will throw an error (notes cannot be saved in the database!).
+          <br />
+          The <code>outer</code> object should also not contain any other field that is not copiable with spread
+          operator.
+        </p>
+        <p>
+          Priority function should not modify any field.
+          <br />
+          Settings function has to <i>return</i> a React component function which follows all the same restrictions
+          (i.e. must be a function and start with uppercase letter) but also same functionalities (i.e. using{" "}
+          <code>useState</code> and <code>useEffect</code>) as a normal component function.
+          <br />
+          It is allowed to modify fields of the note, but only indirectly using <code>fullCopyOuter()</code> or manual
+          spread syntax (not recommended).
+          <br />
+          It is also possible to modify other notes from the settings function, but it is required to use{" "}
+          <code>addDependency(index/indices)</code> and to copy over the note fields with{" "}
+          <code>fullCopyNote(index/indices)</code>.<br />
+          (Note: if addDependency or a copy function fails due to unserializable data, it will{" "}
+          <code>throw "unserializable"</code>)<br />
+          The settings function has props input of the main note, index of the main note, and the array of all notes.
+          <br />
+          While the main note is present in the array of all notes, it is separate from the main note that is passed and
+          it will be replaced by the one that is passed to the settings function.
+          <br />
+          This is to avoid unnecessary copying of the whole array of notes for every single change of the main note.
+          <br />
+          The relevant update methods for the main note and note array are <code>setOuter</code> and{" "}
+          <code>setNote(index/indices,note(s))</code>.
+        </p>
+        <p>
+          The settings function also has access to the local variables of NoteEditor, specifically <code>_public</code>{" "}
+          object which contains useful functions for creating popups (for more info see <code>append_multi_popup</code>{" "}
+          and <code>append_yes_no_popup</code> in <code>App.js</code>).
+          <br />
+          It also contains <code>construct_priority(outer)</code> and <code>construct_jsonify(outer)</code> which return
+          the constructed priority and jsonify functions respectively, and whether an error occured along with the error
+          itself (i.e. <code>[func,failed,err]</code>).
+          <br />
+          These function should be used instead of constructing them manually with eval, as they will then be
+          constructed in the same scope as they would be in usage, therefore avoiding any errors due to scope issues.
+        </p>
+        <h2>Table of functions in _public</h2>
+        <table>
+          <tr>
+            <th>Function</th>
+            <th>Description</th>
+          </tr>
+          <tr>
+            <td>
+              <code>append_multi_popup(title,buttons)</code>
+            </td>
+            <td>
+              Creates a popup with multiple buttons. <code>buttons</code> is an array of objects with <code>text</code>{" "}
+              and <code>onClick</code> fields. <code>onClick</code> is a function that is called when the button is
+              clicked.
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <code>append_yes_no_popup(title,no,onNo,yes,onYes)</code>
+            </td>
+            <td>
+              Creates a popup with two buttons. <code>no</code> and <code>yes</code> are the text of the buttons,{" "}
+              <code>onNo</code> and <code>onYes</code> are the functions that are called when the buttons are clicked.
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <code>construct_priority(outer)</code>
+            </td>
+            <td>
+              Constructs the priority function from the <code>outer</code> object. Returns an array of the constructed
+              function and whether an error occured along with the error itself (i.e. <code>[func,failed,err]</code>).
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <code>construct_jsonify(outer)</code>
+            </td>
+            <td>
+              Constructs the jsonify function from the <code>outer</code> object. Returns an array of the constructed
+              function and whether an error occured along with the error itself (i.e. <code>[func,failed,err]</code>).
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <code>html_log(text/array/object)</code>
+            </td>
+            <td>
+              Logs the given text/array/object to the html log. If the given object is an array, it will be equivalent
+              to calling <code>html_log</code> for each element of the array.
+            </td>
+          </tr>
+        </table>
+      </>,
+      [{ text: "Close", onClick: () => {} }],
+      80
+    );
   }
 
   //bool array, decides what note fields should be copied over and what to save in database
@@ -957,10 +1396,10 @@ function NoteEditor({ pos, origin_notes, closeWithoutSaving, saveAndClose, _publ
       }
     }
   }
-  function fullCopyOuter(){
-    try{
-      return {...outer,note:structuredClone(outer.note)};
-    }catch(e){
+  function fullCopyOuter() {
+    try {
+      return { ...outer, note: structuredClone(outer.note) };
+    } catch (e) {
       throw "unserializable";
     }
   }
@@ -988,26 +1427,25 @@ function NoteEditor({ pos, origin_notes, closeWithoutSaving, saveAndClose, _publ
     setNotes(_new_notes);
   }
 
-  function encodeNotes(){
-    //constructs and runs jsonify functions of dependencies and outer and runs them. In case of an error returns the error message
-    notes.map((x,i)=>{[i,x]}).filter((x)=>dependencies[x[0]]).concat([[pos,outer]]).forEach((x)=>{
-      try{
-        _public.construct_jsonify(x[1].note);
-        
-      }catch(e){
-        return e;
-      }
-    }
-
-
+  function getToSaveNotes() {
+    //pos is needed in processing
+    return notes
+      .map((x, i) => [x, i])
+      .filter(([x, i]) => dependencies[i] && !i === pos)
+      .concat([[outer, pos]]);
   }
-
   return (
-    <div className="note-editor" style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column" }}>
+    <div
+      className="note-editor"
+      style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column", gap: "10px" }}
+    >
       {viewState === 1 ? (
         <></>
       ) : (
-        <div className="note-editor-header" style={{ maxHeight: viewState === 0 ? "50%" : "100%", width: "100%" }}>
+        <div
+          className="note-editor-header"
+          style={{ maxHeight: viewState === 0 ? "50%" : "100%", width: "100%", overflow: "auto" }}
+        >
           <NameAndInput
             title="name:"
             value={outer.note.name}
@@ -1027,25 +1465,32 @@ function NoteEditor({ pos, origin_notes, closeWithoutSaving, saveAndClose, _publ
             value={outer.note.data._priority_c}
             placeholder="(outer, pos, notes) => 100;"
             language="js"
-            onChange={(e) => setOuter({ ...outer, note: { ...outer.note, data: { ...outer.note.data, _priority_c: e.target.value } } })}
+            onChange={(e) =>
+              setOuter({ ...outer, note: { ...outer.note, data: { ...outer.note.data, _priority_c: e.target.value } } })
+            }
           />
-          <PriorityTest constructor={_public.construct_priority} outer={outer} notes={notes} pos={pos} />
+          <PriorityTest outer={outer} notes={notes} pos={pos} constructor={_public.construct_priority} />
           <NameAndInput
             title="settings code:"
             value={outer.note.data._settings_c}
             placeholder="({outer, pos, notes}) => <></>;"
             language="jsx"
-            onChange={(e) => setOuter({ ...outer, note: { ...outer.note, data: { ...outer.note.data, _settings_c: e.target.value } } })}
+            onChange={(e) =>
+              setOuter({ ...outer, note: { ...outer.note, data: { ...outer.note.data, _settings_c: e.target.value } } })
+            }
           />
-          <button onClick={reloadSettings}>Reload settings</button>//!not implemented
+          <button onClick={reloadSettings}>Reload settings</button>
           <NameAndInput
             title="json-ify code:"
             value={outer.note.data._jsonify_c}
             placeholder="(outer) => default_jsonify(outer);//only change if you know what you are doing"
             language="js"
-            onChange={(e) => setOuter({ ...outer, note: { ...outer.note, data: { ...outer.note.data, _jsonify_c: e.target.value } } })}
+            onChange={(e) =>
+              setOuter({ ...outer, note: { ...outer.note, data: { ...outer.note.data, _jsonify_c: e.target.value } } })
+            }
           />
-          <JsonifyTest constructor={_public.construct_jsonify} outer={outer} />
+          <JsonifyTest outer={outer} constructor={_public.construct_jsonify} try_execute={_public.try_jsonify} />
+          <button onClick={onDeleteNote} style={{ color: "red", outline: "red 1px solid" }}>Delete note</button>
         </div>
       )}
       {viewState === 2 ? (
@@ -1053,7 +1498,7 @@ function NoteEditor({ pos, origin_notes, closeWithoutSaving, saveAndClose, _publ
       ) : (
         <div
           className="note-editor-remainder"
-          style={{ flex: 1, width: "100%", outline: `1px solid ${err.hasError ? "red" : "aqua"}` }}
+          style={{ flex: 1, width: "100%", outline: `1px solid ${err.hasError ? "red" : "aqua"}`, overflow: "auto" }}
         >
           <ErrorBoundary err={err} setErr={setErr}>
             <CustomSettings outer={outer} pos={pos} notes={notes} />
@@ -1080,7 +1525,7 @@ function NoteEditor({ pos, origin_notes, closeWithoutSaving, saveAndClose, _publ
   );
 }
 
-function PriorityTest({ priority_code, constructor, outer, pos, notes }) {
+function PriorityTest({ outer, pos, notes, constructor }) {
   const [updatePriorityState, setUpdatePriorityState] = useState(0);
   function updatePriority() {
     setUpdatePriorityState(updatePriorityState + 1);
@@ -1090,11 +1535,10 @@ function PriorityTest({ priority_code, constructor, outer, pos, notes }) {
   useEffect(() => {
     let _priority = (outer, pos, notes) => 100;
     try {
-      let failed=false;
-      let err=null;
-      [_priority, failed, err] = constructor(priority_code);
+      let failed = false;
+      let err = null;
+      [_priority, failed, err] = constructor(outer);
       if (failed) throw err;
-      if (typeof _priority !== "function") throw "not a function";
     } catch (e) {
       console.error("error in priority code eval", e);
       setErr({ hasError: true, error: e, onEval: true });
@@ -1117,16 +1561,14 @@ function PriorityTest({ priority_code, constructor, outer, pos, notes }) {
           ERROR{err.onEval ? " (on eval of function)" : ""}: {err.error.toString()}
         </div>
       ) : (
-        <div style={
-          priority<0||priority>100?{color:"yellow"}:{}}
-        >
-          Priority{priority<0||priority>100?" (out of range)":""}: {priority}
+        <div style={priority < 0 || priority > 100 ? { color: "yellow" } : {}}>
+          Priority{priority < 0 || priority > 100 ? " (out of range)" : ""}: {priority}
         </div>
       )}
     </>
   );
 }
-function JsonifyTest({ jsonify_code, constructor, outer }) {
+function JsonifyTest({ outer, constructor, try_execute }) {
   const [updateJsonifyState, setUpdateJsonifyState] = useState(0);
   function updateJsonify() {
     setUpdateJsonifyState(updateJsonifyState + 1);
@@ -1134,25 +1576,21 @@ function JsonifyTest({ jsonify_code, constructor, outer }) {
   const [json, setJson] = useState({});
   const [err, setErr] = useState({ hasError: false, error: null, onEval: false });
   useEffect(() => {
-    let _jsonify = (outer) => default_jsonify(outer);//only change if you know what you are doing
     try {
-      let failed=false;
-      let err=null;
-      [_jsonify, failed, err] = constructor(jsonify_code);
+      let [_jsonify, failed, err] = constructor(outer);
       if (failed) throw err;
-      if (typeof _jsonify !== "function") throw "not a function";
+      try {
+        let [_json, failed, err] = try_execute(_jsonify, outer);
+        if (failed) throw err;
+        setJson(_json);
+        setErr({ hasError: false, error: null, onEval: false });
+      } catch (e) {
+        console.error("error in jsonify value calculation", e);
+        setErr({ hasError: true, error: e, onEval: false });
+      }
     } catch (e) {
       console.error("error in jsonify code eval", e);
       setErr({ hasError: true, error: e, onEval: true });
-    }
-    try {
-      let _json = _jsonify(outer);
-      if (typeof _json !== "object") throw "not an object";
-      setJson(_json);
-      setErr({ hasError: false, error: null, onEval: false });
-    } catch (e) {
-      console.error("error in jsonify value calculation", e);
-      setErr({ hasError: true, error: e, onEval: false });
     }
   }, [updateJsonifyState]);
   return (
@@ -1163,9 +1601,12 @@ function JsonifyTest({ jsonify_code, constructor, outer }) {
           ERROR{err.onEval ? " (on eval of function)" : ""}: {err.error.toString()}
         </div>
       ) : (
-        <div>
-          Jsonify: {JSON.stringify(json)}
-        </div>
+        // <pre>
+        //   Jsonified:
+        //   <br />
+        //   {JSON.stringify(json, null, 2)}
+        // </pre>
+        <NameAndInput title="Jsonified" value={JSON.stringify(json, null, 2)} placeholder="jsonified" language="json" onChange={() => {}} />
       )}
     </>
   );
@@ -1173,21 +1614,26 @@ function JsonifyTest({ jsonify_code, constructor, outer }) {
 
 function NameAndInput({ title, value, placeholder, language, onChange }) {
   return (
-    <div style={{ display: "flex", flexDirection: "row" }}>
+    <div>
       {title}
-      <CodeEditor value={value} placeholder={placeholder} language={language} onChange={onChange} padding={12}
-      style={{
-        fontFamily:"ui-monospace,SFMono-Regular,SF Mono,Consolas,Liberation Mono,Menlo,monospace",
-        fontSize:"15px",
-        maxHeight:"400px",//~not sure this is useful
-        overflow:"auto",
-      }}
+      <br />
+      <CodeEditor
+        value={value}
+        placeholder={placeholder}
+        language={language}
+        onChange={onChange}
+        padding={12}
+        style={{
+          fontFamily: "ui-monospace,SFMono-Regular,SF Mono,Consolas,Liberation Mono,Menlo,monospace",
+          fontSize: "15px",
+          maxHeight: "300px", //~not sure this is useful
+          width: "90%",
+          overflow: "auto",
+        }}
       />
     </div>
   );
 }
-
-
 
 class ErrorBoundary extends React.Component {
   constructor(props) {
@@ -1212,7 +1658,7 @@ class ErrorBoundary extends React.Component {
       );
     }
     if (this.props.err.hasError) {
-      this.state = { hasError: false, error: null, onEval: false };
+      this.setState({ hasError: false, error: null, onEval: false });
       return (
         <>
           <button onClick={() => this.props.setErr({ hasError: false, error: null, onEval: false })}>Retry</button>

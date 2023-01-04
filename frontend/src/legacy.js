@@ -277,4 +277,12 @@
       //   ]);
       // }
       ////unfortunately required because if there is an error during saving, the popup should not be popped
-    
+  //~ onNoteClick
+    // (pos) => {
+    //   if (_is_updating_data) {
+    //     html_log("Cannot change notes while updating data");
+    //     return;
+    //   }
+
+    //   console.log("clicked note: (pos, name)", pos, notes[pos].note.name);
+    // }
