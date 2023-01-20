@@ -304,3 +304,14 @@
     //   }
     //   return { ...outer, priority: priority, failed: failed };
     // });
+
+    //~ BAD ErrorBoundary
+    // return (
+    //   <>
+    //     <button onClick={() => this.setState({ hasError: false, error: null, onEval: false })}>Retry</button>
+    //     <div style={{ color: "red" }}>
+    //       ERROR{this.state.onEval ? " (on eval)" : ""}:{" "}
+    //       {this.state.error.stack ? this.state.error.stack : this.state.error}
+    //     </div>
+    //   </>
+    // );

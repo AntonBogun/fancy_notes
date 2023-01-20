@@ -35,32 +35,26 @@ window.mobileCheck = function () {
 
 //the page will be expected to run in 3 environments: desktop wallpaper (limited interaction), desktop browser, mobile browser
 
-//if the page runs in a desktop wallpaper, it will be interacting with wallpaper engine, window.wallpaperRequestRandomFileForProperty
-// will be defined, which can be used for setting the background image. Editing of the notes data is not allowed in this mode.
+//if the page runs in a desktop wallpaper, it will be embedded in a wallpaper website, and will have search query ?w=1
+// in wallpaper mode, note onClick is disabled and the buttons on top are hidden. the background is also transparent.
+// in the bottom right corner, there is a button to switch through how long should the delay between db sync requests be.
 
-//if the page runs in a desktop browser, interaction will be allowed by right clicking on a button (which is not possible in wallpaper mode),
-// which will bring up "mark as completed", "delete" (will ask for confirmation), and "edit" (will bring up a customizeable area
-// for editing behavior of the note)
-
-//if the page runs in a mobile browser, the layout will be slightly different, but similar to the desktop browser.
+// desktop browser and mobile browser both run similarly and with minimal differences.
 
 //the notes data is stored in mongodb, and is accessed through an api key requested from the user. For desktop browser and mobile browser,
 // the api key will be entered in a password field, and stored in local storage. For desktop wallpaper, keyboard input is not allowed, so
-// api key will be specified in wallpaper user text field (received through window.wallpaperPropertyListener on load)
+// api key will be sent initially as a query parameter, and stored in local storage.
 
-//each note has a title, description and a function to evaluate urgency, and whether the note should be hidden or not.
-// The function will be called every couple seconds, and all notes will be sorted by urgency.
-// Additionally, each note can have any number of extra properties and functions, which are used to
+// The priority function of notes is called every second, and all notes are sorted by urgency.
+// Additionally, each note can have any number of extra properties and a custom settings function, which allows the user to
 // provide additional functionality to the note. The extra properties and functions are defined by the user and will be displayed
 // in the edit menu, where applicable.
 // if a note is hidden, it will only be displayed if the user clicks on the "display all" button.
 
-//in the two desktop modes, the urgency will be displayed as a progress bar, and notes will be stacked vertically on the right side of the screen
-//in the mobile mode, the bars take the whole screen. Only vertical orientation is supported.
-
 function reload() {
   window.location.reload();
 }
+
 let _is_updating_data = false; //=prevent settings from opening while updating
 // let _settings_open = false; //=prevent updates while settings are open
 // // ~assuming that timeout can simply be cleared, therefore "mutexes" are not needed
@@ -70,12 +64,33 @@ let _db_timeout_id = 0; //needed to cancel timeout
 let _db_cancel_token = null; //needed to cancel axios request
 let _db_resolve_func = null;
 let _db_reject_func = null; //needed to cancel promise
+let _block_autoupdate = false;
+let _resume_on_focus = false;
+let _last_db_check = new Date().getTime();
+const _out_of_focus_update = 1000 * 60; //1 minute 
 
 function is_code_valid(code) {
   return !!(typeof code === "string" && code.trim());
 }
+function utcFromArr(date_arr) {
+  if (date_arr.length >= 2) date_arr[1] -= 1; //month is 0 indexed
+  return new Date(...date_arr).getTime();
+}
+function secUntil(date_arr) {
+  return (utcFromArr(date_arr) - Date.now()) / 1000;
+}
+function secSince(date_arr) {
+  return (Date.now() - utcFromArr(date_arr)) / 1000;
+}
+function linearBetweenDates(date_arr1, date_arr2) {
+  let sec1 = utcFromArr(date_arr1);
+  let sec2 = utcFromArr(date_arr2);
+  let curr = Date.now();
+  return (curr - sec1) / (sec2 - sec1);
+}
 
-function notes_equal(x, y) {//~implied that x and y have both been stringified and parsed
+function notes_equal(x, y) {
+  //~implied that x and y have both been stringified and parsed
   if (x === y) return true;
   // if both x and y are null or undefined and exactly the same
   if (!(x instanceof Object) || !(y instanceof Object)) return false;
@@ -99,9 +114,9 @@ function notes_equal(x, y) {//~implied that x and y have both been stringified a
   return true;
 }
 function process_json(obj) {
-  try{
+  try {
     return [JSON.parse(JSON.stringify(obj)), false, null];
-  }catch(e){
+  } catch (e) {
     return [null, true, e];
   }
 }
@@ -111,7 +126,7 @@ function App() {
   const [state, setState] = useState({
     apikey: "",
     appid: "",
-    transparent: false, //transparent background for use with wallpaper engine
+    wallpaper: false, //whether the app is running in wallpaper mode
     // display_notes: false, //go to api input if false
     last_db_update_date: null, //used for detecting change by other instances
     allow_intervals: false, //allow intervals to run, false until notes loaded
@@ -155,8 +170,8 @@ function App() {
         };
         upd("apikey", "apikey");
         upd("appid", "appid");
-        upd("t", "transparent");
-        if (new_state["transparent"]) local_state["transparent"] = true;
+        upd("w", "wallpaper");
+        if (new_state["wallpaper"]) local_state["wallpaper"] = true;
         if (new_state["apikey"] && new_state["appid"]) {
           //save to local storage
           localStorage.setItem("apikey", new_state["apikey"]);
@@ -183,11 +198,30 @@ function App() {
     }
   }, []); //window.location.search isn't a valid dependency because mutating it doesn't re-render the component
 
-  // useEffect(() => {
-  //   if (state.apikey && state.appid && state.display_notes) {
-  //     load_all_data();
-  //   }
-  // }, [state.display_notes]);
+  //setup update block when out of focus
+  useEffect(() => {
+    window.addEventListener("focus", () => {
+      if(!_resume_on_focus){//prevent update from starting if it was blocked by a popup 
+        return;
+      }else{
+        _resume_on_focus = false;
+      }
+      start_autoupdate();
+      if (new Date().getTime() - _last_db_check > _out_of_focus_update){
+        console.log("enough time has passed since last update, updating now")
+        _last_db_check = new Date().getTime();
+        setDBInterval(x => x + 1);//force check update, causes
+      }
+    });
+    window.addEventListener("blur", () => {
+      console.log("blur", _resume_on_focus)//!debug
+      if (!_block_autoupdate){
+        _resume_on_focus = true;
+        stop_autoupdate();
+      }
+    });
+  }, []);
+      
 
   // get notes data from mongodb
   async function db_request(local_state, action, data, cancel_token = null) {
@@ -269,13 +303,17 @@ function App() {
   async function request_all_data(local_state, cancel_token = null) {
     //=stateless, *mutates* state, may push date, throws
     try {
-      let response = await db_request(local_state, "find", {filter:{$or:[{ignore:""},{type:"DATE"}]}}, cancel_token);
+      let response = await db_request(
+        local_state,
+        "find",
+        { filter: { $or: [{ ignore: "" }, { type: "DATE" }] } },
+        cancel_token
+      );
       let data = JSON.parse(response.data);
-      let new_notes = data.documents
-        .filter((note) => note.type === "NOTE")
-        // .map((note) => {
-        //   return new_outer_shell(note);
-        // });
+      let new_notes = data.documents.filter((note) => note.type === "NOTE");
+      // .map((note) => {
+      //   return new_outer_shell(note);
+      // });
       let date = data.documents.filter((note) => note.type === "DATE");
       if (date.length === 0) {
         console.log("no date found, creating new one");
@@ -319,6 +357,7 @@ function App() {
 
   async function get_last_db_update_date(local_state, cancel_token = null) {
     //=stateless, *mutates* state, may push date, throws
+    _last_db_check = new Date().getTime();
     try {
       console.log("getting last db update date"); //!debug
       let response = await db_request(local_state, "findOne", { filter: { type: "DATE" } }, cancel_token);
@@ -345,7 +384,7 @@ function App() {
       type: "NOTE",
       name: "new note",
       description: "",
-      ignore: "",//when non-empty, note is ignored, used for collisions and deletion
+      ignore: "", //when non-empty, note is ignored, used for collisions and deletion
       data: {
         _priority_c: "",
         _settings_c: "",
@@ -360,8 +399,8 @@ function App() {
     return {
       failed: false,
       val: 100,
-      priority: (outer, pos, notes) => 100,
-      settings: ({ outer, pos, notes }) => <></>,
+      priority: () => 100,
+      settings: () => <></>,
       jsonify: default_jsonify,
       note: inner,
     };
@@ -382,7 +421,7 @@ function App() {
   function construct_priority(outer) {
     //~evalutes in the correct context
     //=stateless
-    let default_priority = (outer, pos, notes) => 100;
+    let default_priority = () => 100;
     try {
       if (is_code_valid(outer.note.data._priority_c)) {
         let priority = eval(outer.note.data._priority_c);
@@ -427,13 +466,16 @@ function App() {
       return [default_jsonify, true, error];
     }
   }
-  //*construct_all_jsonifies is not present unlike construct_all_priorities because there isn't such a thing as 
+  //*construct_all_jsonifies is not present unlike construct_all_priorities because there isn't such a thing as
   //*a failed property for jsonify
 
   function try_full_jsonify(outer) {
     let [jsonify, failed, err] = construct_jsonify(outer);
     if (failed) {
-      console.error(`failed to construct jsonify function for note, name: ${outer.note.name}, id: ${outer.note._id}`, err);
+      console.error(
+        `failed to construct jsonify function for note, name: ${outer.note.name}, id: ${outer.note._id}`,
+        err
+      );
       html_log([`failed to construct jsonify function for note, name: ${outer.note.name}, id: ${outer.note._id}`, err]);
       return [null, true, err];
     }
@@ -443,7 +485,7 @@ function App() {
       html_log([`failed to jsonify note, name: ${outer.note.name}, id: ${outer.note._id}`, err2]);
       return [null, true, err2];
     }
-    let [json, failed3, err3] = process_json(_json_pre);//ensures no error during stringify
+    let [json, failed3, err3] = process_json(_json_pre); //ensures no error during stringify
     if (failed3) {
       console.error(`failed to process json for note, name: ${outer.note.name}, id: ${outer.note._id}`, err3);
       html_log([`failed to process json for note, name: ${outer.note.name}, id: ${outer.note._id}`, err3]);
@@ -495,28 +537,38 @@ function App() {
     // // ~NOTE: launches the two intervals immediately, meaning update_order and db_check shouldn't be pre-emptively called
     // ~the launch of intervals is not immediate
     //autoupdate order every second
+    _block_autoupdate = false;
     function sort_interval() {
-      if (_sort_timeout_id) {
-        clearTimeout(_sort_timeout_id);//because in dev, app is rendered twice
-      }
+      clearTimeout(_sort_timeout_id); //because in dev, app is rendered twice 
+      //~this should not be needed as timeout should be cancelled with stop_autoupdate, but react autoreload breaks this
+      //~it apparently does not help still because on change the reference to _block_autoupdate is overwritten but existing
+      //~references are not updated, so new intervals just see "false", and there is no way to change new value without
+      //~a full reload
+      if (_block_autoupdate) return;
       _sort_timeout_id = setTimeout(() => {
+        clearTimeout(_sort_timeout_id);
+        if (_block_autoupdate) return;
         //time the execution and if it takes too long, log it
-        let start = Date.now();
-        setNotes((local_notes) => update_order(local_notes));
-        let end = Date.now();
-        if (end - start > 500) {
-          console.warn("sorting took " + (end - start) / 1000 + "s");
-          html_log("sorting took " + (end - start) / 1000 + "s");
-        }
-        sort_interval();
+        setNotes((local_notes) => {
+          let start = Date.now();
+          let newnotes=update_order(local_notes)
+          let end = Date.now();
+          if (end - start > 500) {
+            console.warn("sorting took " + (end - start) / 1000 + "s");
+            html_log("sorting took " + (end - start) / 1000 + "s");
+          }
+          sort_interval();
+          return newnotes;
+        });
       }, 1000);
     }
 
     function db_check_interval() {
-      if (_db_timeout_id) {
-        clearTimeout(_db_timeout_id);
-      }
+      clearTimeout(_db_timeout_id);
+      if (_block_autoupdate) return;
       _db_timeout_id = setTimeout(async () => {
+        clearTimeout(_db_timeout_id);
+        if (_block_autoupdate) return;
         //create promise
         let promise = new Promise((resolve, reject) => {
           _db_resolve_func = resolve; //allows to execute after async function that accesses state
@@ -577,7 +629,9 @@ function App() {
         _db_resolve_func();
       }
     } catch (error) {
-      _db_reject_func(error);
+      if (!_db_reject_func){
+        console.warn("could not reject db_check_request, if this is due to onFocus, it is normal");
+      }else _db_reject_func(error);
       _is_updating_data = false;
       _db_cancel_token = null;
     }
@@ -586,6 +640,8 @@ function App() {
   function stop_autoupdate() {
     clearTimeout(_sort_timeout_id);
     clearTimeout(_db_timeout_id);
+    _block_autoupdate = true;
+    console.log("block at stop",_block_autoupdate); //!debug
     if (_db_cancel_token) {
       _db_cancel_token.cancel();
       // _db_cancel_token.cancel();//doesn't seem to do anything
@@ -605,7 +661,7 @@ function App() {
     try {
       setDisplayNotes(true);
       [local_state, new_notes] = await request_all_data(local_state);
-      new_notes=new_notes.map(new_outer_shell);
+      new_notes = new_notes.map(new_outer_shell);
       new_notes = construct_all_priorities(new_notes);
       new_notes = update_order(new_notes);
       setNotes(new_notes);
@@ -678,6 +734,7 @@ function App() {
   }
 
   async function saveAndClose(notesToSave) {
+    console.log("saving and closing", notesToSave); //!debug
     if (_is_updating_data) {
       html_log("cannot save while updating data");
       return;
@@ -688,7 +745,7 @@ function App() {
     //=stateless, *mutates* state, pushes notes and date, throws
     try {
       let jsonified_notes = notesToSave.map(([outer, i]) => {
-        let [json, failed, err] = try_full_jsonify(outer)
+        let [json, failed, err] = try_full_jsonify(outer);
         if (failed) {
           console.error("failed to jsonify note " + i + ": ", err);
           html_log(["failed to jsonify note " + i + ": ", err]);
@@ -698,17 +755,22 @@ function App() {
       });
       // returns:[local_state, local_notes, upstream_exists, new_upstream];
       // collisionHandle(jsonified_notes, local_state, local_notes, false);//do not push date
-      let delete_on_false=[];
-      let new_append=[];
+      let delete_on_false = [];
+      let new_append = [];
       // debugger;
-      try{
+      try {
         let new_date = null;
         [local_state, new_date] = await get_last_db_update_date(local_state, _db_cancel_token);
         if (new_date > local_state.last_db_update_date) {
           html_log("newer data exists on server, handling collision");
-          [local_state, local_notes, delete_on_false, new_append] = await collisionHandle(jsonified_notes, local_state, local_notes, false);//do not push date
+          [local_state, local_notes, delete_on_false, new_append] = await collisionHandle(
+            jsonified_notes,
+            local_state,
+            local_notes,
+            false
+          ); //do not push date
         }
-      }catch(e){
+      } catch (e) {
         console.error("failed to handle collision: ", e);
         html_log(["failed to handle collision: ", e]);
         throw e;
@@ -761,7 +823,7 @@ function App() {
             start_autoupdate();
           }} //**works because NoteEditor creates a new copy of notes therefore simply closing it will not affect the original notes
           saveAndClose={saveAndClose}
-          onDeleteNote={()=>onDeleteNote(pos)}
+          onDeleteNote={() => onDeleteNote(pos)}
           _public={{
             //_public passes functions to NoteEditor
             append_yes_no_popup,
@@ -783,97 +845,92 @@ function App() {
       return;
     }
     stop_autoupdate();
-    append_yes_no_popup(
-      "Go back to selecting appid and apikey?",
-      "No",
-      start_autoupdate,
-      "Yes",
-      () => {
-        rollback_to_input(state);
-      }
-    );
+    append_yes_no_popup("Go back to selecting appid and apikey?", "No", start_autoupdate, "Yes", () => {
+      rollback_to_input(state);
+    });
   }
-  async function deleteNotes(json_to_delete, local_state, reason, deleteUpstream=true, push_date=true) {
+  async function deleteNotes(json_to_delete, local_state, reason, deleteUpstream = true, push_date = true) {
     //~does not actually delete but rather replace with different id and change "ignore" field
     let curr_date = new Date();
     let to_delete_ids = json_to_delete.map((json) => json._id);
-    json_to_delete.forEach((json)=>{
+    json_to_delete.forEach((json) => {
       //remove id and add ignore field
       let id = json._id.$oid;
       delete json._id;
       json.ignore = `${reason};${curr_date.toISOString()};${id}`;
     });
     await db_request(local_state, "insertMany", { documents: json_to_delete });
-    if (deleteUpstream)
-    await db_request(local_state, "deleteMany", { filter: { _id: { $in: to_delete_ids } } });
-    if (push_date)
-      return await push_current_date(local_state);
+    if (deleteUpstream) await db_request(local_state, "deleteMany", { filter: { _id: { $in: to_delete_ids } } });
+    if (push_date) return await push_current_date(local_state);
     return local_state;
   }
   //~does not updateOrder or replace diffs, only replaces locally and inserts upstream in case of update/collision
   //~also returns bool del array and new notes array
   //~throws
-  async function collisionHandle(jsoned_diffs, local_state, local_notes, push_date=true) {
+  async function collisionHandle(jsoned_diffs, local_state, local_notes, push_date = true) {
     let lookup = {};
-    let diff_exists=Array(local_notes.length).fill(false);
-    let upstream_exists=Array(local_notes.length).fill(false);
-    local_notes.map((note)=>{
-      let [json, failed, err] = try_full_jsonify(note);
-      if (failed) {
-        console.error("failed to jsonify note: ", err);
-        html_log(["failed to jsonify note: ", err]);
-        throw err;
-      }
-      return json;
-    }).forEach((note, i) => {
-      lookup[note._id.$oid] = i;
-    });
+    let diff_exists = Array(local_notes.length).fill(false);
+    let upstream_exists = Array(local_notes.length).fill(false);
+    local_notes
+      .map((note) => {
+        let [json, failed, err] = try_full_jsonify(note);
+        if (failed) {
+          console.error("failed to jsonify note: ", err);
+          html_log(["failed to jsonify note: ", err]);
+          throw err;
+        }
+        return json;
+      })
+      .forEach((note, i) => {
+        lookup[note._id.$oid] = i;
+      });
     jsoned_diffs.forEach((diff) => {
       if (lookup.hasOwnProperty(diff._id.$oid)) {
-        diff_exists[lookup[diff._id.$oid]]=true;
-      }else{
+        diff_exists[lookup[diff._id.$oid]] = true;
+      } else {
         console.error("new id not expected: ", diff);
         html_log(["new id not expected, name: ", diff.name]);
       }
     });
-    let upstream_notes=[];
-    let collisions=[];
-    let new_upstream=[];
-    let replaced_local=0;
+    let upstream_notes = [];
+    let collisions = [];
+    let new_upstream = [];
+    let replaced_local = 0;
     [local_state, upstream_notes] = await request_all_data(local_state);
     upstream_notes.forEach((note) => {
       let id = note._id;
-      if (lookup.hasOwnProperty(id)) {//received note does not use $oid
+      if (lookup.hasOwnProperty(id)) {
+        //received note does not use $oid
         let i = lookup[id];
-        if(upstream_exists[i]){
+        if (upstream_exists[i]) {
           console.error("duplicate id: ", note);
           html_log(["duplicate id, name: ", note.name]);
           throw "duplicate id";
         }
-        if(!notes_equal(note,local_notes[i].note)){
-          if(diff_exists[i]){
-            note._id = { $oid: id };//~need for send
+        if (!notes_equal(note, local_notes[i].note)) {
+          if (diff_exists[i]) {
+            note._id = { $oid: id }; //~need for send
             collisions.push(note);
-          }else{
-            local_notes[i]=new_outer_shell(note);//~inner (json) note is not valid for display
+          } else {
+            local_notes[i] = new_outer_shell(note); //~inner (json) note is not valid for display
             replaced_local++;
           }
-          upstream_exists[i]=true;
+          upstream_exists[i] = true;
         }
-      }else{
+      } else {
         new_upstream.push(new_outer_shell(note));
       }
     });
-    if(collisions.length>0){
+    if (collisions.length > 0) {
       html_log(["collisions detected, count: ", collisions.length]);
       //~false because upstream deletion is handled by update
       local_state = await deleteNotes(collisions, local_state, "COLLISION", false, push_date);
     }
-    if(replaced_local>0){
+    if (replaced_local > 0) {
       html_log(["local notes replaced: ", replaced_local]);
     }
     //OR between upstream_exists and diff_exists because local diff overwrites abscence of upstream
-    return [local_state, local_notes, upstream_exists.map((x,i)=>x||diff_exists[i]), new_upstream];
+    return [local_state, local_notes, upstream_exists.map((x, i) => x || diff_exists[i]), new_upstream];
   }
   async function onAddNewNote() {
     let local_state = { ...state };
@@ -884,8 +941,8 @@ function App() {
     }
     stop_autoupdate();
     _is_updating_data = true;
-    let new_date=null;
-    try{
+    let new_date = null;
+    try {
       [local_state, new_date] = await get_last_db_update_date(local_state, _db_cancel_token);
       if (new_date > local_state.last_db_update_date) {
         html_log("new updates in db found, add new note cancelled, reloading");
@@ -893,7 +950,7 @@ function App() {
         _is_updating_data = false;
         return;
       }
-    }catch(err){
+    } catch (err) {
       console.error("sync to db failed on add new note", err);
       html_log(["sync to db failed on add new note", err]);
       start_autoupdate();
@@ -907,7 +964,7 @@ function App() {
       if (data.insertedId) {
         new_note._id = data.insertedId;
         local_state = await push_current_date(local_state);
-        new_note= new_outer_shell(new_note);
+        new_note = new_outer_shell(new_note);
         setNotes(update_order([...notes, new_note]));
         setState(local_state);
         start_autoupdate();
@@ -922,20 +979,25 @@ function App() {
     _is_updating_data = false;
   }
 
-  function onDeleteNote(pos){
+  function onDeleteNote(pos) {
     append_yes_no_popup(
-      <>Are you sure you want to delete this note?<br/>
-      Any unsaved changes will be lost.</>,
-      "No",() => {},
-      "Yes", async () => {
+      <>
+        Are you sure you want to delete this note?
+        <br />
+        Any unsaved changes will be lost.
+      </>,
+      "No",
+      () => {},
+      "Yes",
+      async () => {
         if (_is_updating_data) {
           html_log("Cannot delete while updating data");
           return;
         }
         _is_updating_data = true;
-        let local_state={...state};
-        try{
-          let new_date=null;
+        let local_state = { ...state };
+        try {
+          let new_date = null;
           [local_state, new_date] = await get_last_db_update_date(local_state);
           if (new_date > local_state.last_db_update_date) {
             html_log("new updates found, delete cancelled, reloading");
@@ -945,7 +1007,7 @@ function App() {
             _is_updating_data = false;
             return;
           }
-        }catch(e){
+        } catch (e) {
           console.error("failed to get last db update date on delete", e);
           html_log(["failed to get last db update date on delete", e]);
           _is_updating_data = false;
@@ -957,23 +1019,23 @@ function App() {
           html_log(["failed to jsonify note on delete " + pos + ": ", err]);
           return;
         }
-        try{
-          local_state=await deleteNotes([json], local_state, "DELETED");
+        try {
+          local_state = await deleteNotes([json], local_state, "DELETED");
           setNotes(update_order(notes.filter((_, i) => i !== pos)));
           setState(local_state);
           clear_popups();
           start_autoupdate();
-        }catch(e){
+        } catch (e) {
           console.error("failed to delete note", e);
           html_log(["failed to delete note", e]);
         }
         _is_updating_data = false;
       }
-    )
+    );
   }
 
   return (
-    <div className="App" style={state.transparent ? { backgroundColor: "transparent" } : {}}>
+    <div className="App" style={state.wallpaper ? { backgroundColor: "transparent" } : {}}>
       <div className="log_remainder" style={{ flex: 1, overflowY: "auto", position: "relative" }}>
         {displayNotes ? (
           <>
@@ -983,7 +1045,9 @@ function App() {
             </div>
             <Notes data={notes} onNoteClick={onNoteClick} />
             {popupStack.map((data, index) => (
-              <Popup zIndex={index + 1} key={index}>{data.content(index)}</Popup>
+              <Popup zIndex={index + 1} key={index}>
+                {data.content(index)}
+              </Popup>
             ))}
           </>
         ) : (
@@ -1060,7 +1124,10 @@ function MultiOptionPopup({ title, options, maxHeightPercent = 50 }) {
       }}
     >
       {/* center text */}
-      <div className="multi_option_title" style={{ maxHeight: `${maxHeightPercent}%`, overflow: "auto" }}>
+      <div
+        className="multi_option_title"
+        style={{ maxHeight: `${maxHeightPercent}%`, overflow: "auto", maxWidth: "100%" }}
+      >
         {title}
       </div>
       <div
@@ -1075,7 +1142,7 @@ function MultiOptionPopup({ title, options, maxHeightPercent = 50 }) {
           overflow: "auto",
         }}
       >
-        {options.map((option,i) => (
+        {options.map((option, i) => (
           <button className="option_button" style={{ flex: 1 }} onClick={option.onClick} key={i}>
             {option.text}
           </button>
@@ -1178,7 +1245,16 @@ function Note({ data, onClick }) {
             }}
           />
         </div>
-        <div style={{ textAlign: "center", textOverflow: "ellipsis", zIndex: 1, width: "100%" }}>
+        <div
+          style={{
+            textAlign: "center",
+            textOverflow: "ellipsis",
+            zIndex: 1,
+            width: "100%",
+            overflow: "hidden",
+            whiteSpace: "nowrap",
+          }}
+        >
           {data.failed ? `failed - ${data.note.name}` : `${Math.round(data.val)}% - ${data.note.name}`}
         </div>
       </div>
@@ -1195,7 +1271,6 @@ function NoteEditor({ pos, origin_notes, closeWithoutSaving, saveAndClose, onDel
   const [outer, setOuter] = useState(notes[pos]);
   const [viewState, setViewState] = useState(0);
   const [err, setErr] = useState({ hasError: false, error: null, onEval: false });
-  const [CustomSettings, setCustomSettings] = useState(() => ({ outer, pos, notes }) => <></>); //two layers because counts as constructor
   const [reloadSettingsState, setReloadSettingsState] = useState(0);
   function reloadSettings() {
     setReloadSettingsState(reloadSettingsState + 1);
@@ -1213,23 +1288,6 @@ function NoteEditor({ pos, origin_notes, closeWithoutSaving, saveAndClose, onDel
       return <div>note contains unserializable data</div>; //!supposed to dump note data
     }
   }, [pos, origin_notes]);
-
-  useEffect(() => {
-    try {
-      if (!is_code_valid(outer.note.data._settings_c)) {
-        setCustomSettings(() => ({ outer, pos, notes }) => <></>);
-        return;
-      }
-      let newCustomSettings = eval(transpile(outer.note.data._settings_c));
-      if (typeof newCustomSettings !== "function") throw new Error("custom settings must be a function");
-      setCustomSettings(() => newCustomSettings);
-      setErr({ hasError: false, error: null, onEval: false });
-    } catch (e) {
-      console.error("failed to eval custom settings");
-      console.error(e);
-      setErr({ hasError: true, error: e, onEval: true });
-    }
-  }, [reloadSettingsState]);
 
   function cycleViewState() {
     setViewState((viewState + 1) % 3);
@@ -1260,33 +1318,38 @@ function NoteEditor({ pos, origin_notes, closeWithoutSaving, saveAndClose, onDel
           <code>
             outer: {"{"}*constructed functions*,val:num,failed:bool,
             <br />
-            note:{"{"}name:str,description:str, data:{"{"}_auto:object (all fields are saved automatically),
-            _priority_c, _settings_c, _jsonify_c{"}"}
+            note:{"{"}name:str, description:str, ignore:str, data:{"{"}_auto:object (all fields are saved
+            automatically), _priority_c, _settings_c, _jsonify_c (all _c are str){"}"}
             {"}"}
             {"}"}
           </code>
           <br />
-          NOTE: there may not be any functions within the <code>note</code> object, otherwise it will not be possible to
-          copy it and it will throw an error (notes cannot be saved in the database!).
+          NOTE: there can not be any functions within the <code>note</code> object, otherwise it will not be possible to
+          copy it and it will throw an error (and then notes cannot be saved in the database!).
           <br />
-          The <code>outer</code> object should also not contain any other field that is not copiable with spread
-          operator.
+          The <code>outer</code> object should also not contain any other field that is not fully copiable with spread
+          operator (i.e. arrays or objects).
         </p>
         <p>
           Priority function should not modify any field.
           <br />
-          Settings function has to <i>return</i> a React component function which follows all the same restrictions
-          (i.e. must be a function and start with uppercase letter) but also same functionalities (i.e. using{" "}
-          <code>useState</code> and <code>useEffect</code>) as a normal component function.
+          Example: <code>{"(outer, pos, notes) => 100;"}</code>
           <br />
-          It is allowed to modify fields of the note, but only indirectly using <code>fullCopyOuter()</code> or manual
-          spread syntax (not recommended).
+          Settings code has to <i>return</i> a React component function (have it as last statement) which follows all
+          the same restrictions (i.e. must be a function and start with uppercase letter) but also same functionalities
+          (i.e. using
+          <code> useState</code> and <code>useEffect</code>) as a normal component function.
           <br />
-          It is also possible to modify other notes from the settings function, but it is required to use{" "}
-          <code>addDependency(index/indices)</code> and to copy over the note fields with{" "}
-          <code>fullCopyNote(index/indices)</code>.<br />
-          (Note: if addDependency or a copy function fails due to unserializable data, it will{" "}
-          <code>throw "unserializable"</code>)<br />
+          Example: <code>{"function Example({outer, pos, notes, local, _public}){return <></>;}; Example;"}</code>
+          <br />
+          It is allowed to modify fields of the note, but only indirectly using <code>local.fullCopyOuter()</code> or
+          manual spread syntax (not recommended).
+          <br />
+          It is also possible to modify other notes from the settings function, but it is required to use
+          <code> local.addDependency(index/indices)</code> and to copy over the note fields with
+          <code> local.fullCopyNote(index/indices)</code>.<br />
+          (Note: if addDependency or a copy function fails due to unserializable data, it will
+          <code> throw "unserializable"</code>)<br />
           The settings function has props input of the main note, index of the main note, and the array of all notes.
           <br />
           While the main note is present in the array of all notes, it is separate from the main note that is passed and
@@ -1294,12 +1357,12 @@ function NoteEditor({ pos, origin_notes, closeWithoutSaving, saveAndClose, onDel
           <br />
           This is to avoid unnecessary copying of the whole array of notes for every single change of the main note.
           <br />
-          The relevant update methods for the main note and note array are <code>setOuter</code> and{" "}
-          <code>setNote(index/indices,note(s))</code>.
+          The relevant update methods for the main note and note array are <code>local.setOuter</code> and
+          <code> local.setNote(index/indices,note(s))</code>.
         </p>
         <p>
-          The settings function also has access to the local variables of NoteEditor, specifically <code>_public</code>{" "}
-          object which contains useful functions for creating popups (for more info see <code>append_multi_popup</code>{" "}
+          The settings function also has access to the local variables of NoteEditor, specifically <code>_public </code>
+          object which contains useful functions for creating popups (for more info see <code>append_multi_popup </code>
           and <code>append_yes_no_popup</code> in <code>App.js</code>).
           <br />
           It also contains <code>construct_priority(outer)</code> and <code>construct_jsonify(outer)</code> which return
@@ -1311,56 +1374,60 @@ function NoteEditor({ pos, origin_notes, closeWithoutSaving, saveAndClose, onDel
         </p>
         <h2>Table of functions in _public</h2>
         <table>
-          <tr>
-            <th>Function</th>
-            <th>Description</th>
-          </tr>
-          <tr>
-            <td>
-              <code>append_multi_popup(title,buttons)</code>
-            </td>
-            <td>
-              Creates a popup with multiple buttons. <code>buttons</code> is an array of objects with <code>text</code>{" "}
-              and <code>onClick</code> fields. <code>onClick</code> is a function that is called when the button is
-              clicked.
-            </td>
-          </tr>
-          <tr>
-            <td>
-              <code>append_yes_no_popup(title,no,onNo,yes,onYes)</code>
-            </td>
-            <td>
-              Creates a popup with two buttons. <code>no</code> and <code>yes</code> are the text of the buttons,{" "}
-              <code>onNo</code> and <code>onYes</code> are the functions that are called when the buttons are clicked.
-            </td>
-          </tr>
-          <tr>
-            <td>
-              <code>construct_priority(outer)</code>
-            </td>
-            <td>
-              Constructs the priority function from the <code>outer</code> object. Returns an array of the constructed
-              function and whether an error occured along with the error itself (i.e. <code>[func,failed,err]</code>).
-            </td>
-          </tr>
-          <tr>
-            <td>
-              <code>construct_jsonify(outer)</code>
-            </td>
-            <td>
-              Constructs the jsonify function from the <code>outer</code> object. Returns an array of the constructed
-              function and whether an error occured along with the error itself (i.e. <code>[func,failed,err]</code>).
-            </td>
-          </tr>
-          <tr>
-            <td>
-              <code>html_log(text/array/object)</code>
-            </td>
-            <td>
-              Logs the given text/array/object to the html log. If the given object is an array, it will be equivalent
-              to calling <code>html_log</code> for each element of the array.
-            </td>
-          </tr>
+          <tbody>
+            <tr>
+              <th>Function</th>
+              <th>Description</th>
+            </tr>
+            <tr>
+              <td>
+                <code>append_multi_popup(title,buttons)</code>
+              </td>
+              <td>
+                Creates a popup with multiple buttons. <code>buttons</code> is an array of objects with
+                <code> text </code>
+                and <code>onClick</code> fields. <code>onClick</code> is a function that is called when the button is
+                clicked.
+              </td>
+            </tr>
+            <tr>
+              <td>
+                <code>append_yes_no_popup(title,no,onNo,yes,onYes)</code>
+              </td>
+              <td>
+                Creates a popup with two buttons. <code>no</code> and <code>yes</code> are the text of the buttons,
+                <code> onNo</code> and <code>onYes</code> are the functions that are called when the buttons are
+                clicked.
+              </td>
+            </tr>
+            <tr>
+              <td>
+                <code>construct_priority(outer)</code>
+              </td>
+              <td>
+                Constructs the priority function from the <code>outer</code> object. Returns an array of the constructed
+                function and whether an error occured along with the error itself (i.e. <code>[func,failed,err]</code>).
+              </td>
+            </tr>
+            <tr>
+              <td>
+                <code>construct_jsonify(outer)</code>
+              </td>
+              <td>
+                Constructs the jsonify function from the <code>outer</code> object. Returns an array of the constructed
+                function and whether an error occured along with the error itself (i.e. <code>[func,failed,err]</code>).
+              </td>
+            </tr>
+            <tr>
+              <td>
+                <code>html_log(text/array/object)</code>
+              </td>
+              <td>
+                Logs the given text/array/object to the html log. If the given object is an array, it will be equivalent
+                to calling <code>html_log</code> for each element of the array.
+              </td>
+            </tr>
+          </tbody>
         </table>
       </>,
       [{ text: "Close", onClick: () => {} }],
@@ -1369,8 +1436,9 @@ function NoteEditor({ pos, origin_notes, closeWithoutSaving, saveAndClose, onDel
   }
 
   //bool array, decides what note fields should be copied over and what to save in database
-  const [dependencies, setDependencies] = useState(Array(origin_notes[pos].length).fill(false));
+  const [dependencies, setDependencies] = useState(Array(origin_notes.length).fill(false));
   function addDependency(_in) {
+    console.log("add dependencies", dependencies);//!debug
     //if _in is a number, convert to array
     let arr = Array.isArray(_in) ? _in : [_in];
     arr = arr.filter((x) => !dependencies[x]);
@@ -1382,13 +1450,19 @@ function NoteEditor({ pos, origin_notes, closeWithoutSaving, saveAndClose, onDel
         _new_notes[x] = { ...origin_notes[x], note: _note_copies[i] };
       });
       setNotes(_new_notes);
+      let _new_dependencies = [...dependencies];
+      arr.forEach((x) => (_new_dependencies[x] = true));
+      setDependencies(_new_dependencies);
     } catch (e) {
       if (e.name === "DataCloneError") {
         throw "unserializable";
+      } else {
+        throw e;
       }
     }
   }
   function fullCopyOuter() {
+    //outer needed as reference to newest outer
     try {
       return { ...outer, note: structuredClone(outer.note) };
     } catch (e) {
@@ -1397,6 +1471,7 @@ function NoteEditor({ pos, origin_notes, closeWithoutSaving, saveAndClose, onDel
   }
 
   function fullCopyNote(_in) {
+    //notes needed as reference to newest notes
     //~may be inefficient if copying something like a database, but it is up to the user to understand what they are doing
     //if array, copy those notes
     try {
@@ -1409,6 +1484,7 @@ function NoteEditor({ pos, origin_notes, closeWithoutSaving, saveAndClose, onDel
     }
   }
   function setNote(_in_pos, _in_note) {
+    //notes needed as reference to newest notes
     let arr_pos = Array.isArray(_in_pos) ? _in_pos : [_in_pos];
     let arr_note = Array.isArray(_in_note) ? _in_note : [_in_note];
     if (arr_pos.length !== arr_note.length) throw "length mismatch";
@@ -1421,10 +1497,19 @@ function NoteEditor({ pos, origin_notes, closeWithoutSaving, saveAndClose, onDel
 
   function getToSaveNotes() {
     //pos is needed in processing
-    return notes
-      .map((x, i) => [x, i])
-      .filter(([x, i]) => dependencies[i] && !i === pos)
-      .concat([[outer, pos]]);
+    console.log("save notes dependencies", dependencies);//!debug
+    // return notes
+    //   .map((x, i) => [x, i])
+    //   .filter(([x, i]) => dependencies[i] && !i === pos)
+    //   .concat([[outer, pos]]);
+    //!debug
+    let new_notes = notes.map((x, i) => [x, i]);//!debug
+    console.log("map new_notes", new_notes);//!debug
+    new_notes = new_notes.filter(([x, i]) => dependencies[i]&&i!==pos);//!debug
+    console.log("filter new_notes", new_notes);//!debug
+    new_notes = new_notes.concat([[outer, pos]]);//!debug
+    console.log("concat new_notes", new_notes);//!debug
+    return new_notes;
   }
   return (
     <div
@@ -1465,7 +1550,7 @@ function NoteEditor({ pos, origin_notes, closeWithoutSaving, saveAndClose, onDel
           <NameAndInput
             title="settings code:"
             value={outer.note.data._settings_c}
-            placeholder="({outer, pos, notes}) => <></>;"
+            placeholder="function Example({outer, pos, notes, local, _public}){return <></>;}; Example;"
             language="jsx"
             onChange={(e) =>
               setOuter({ ...outer, note: { ...outer.note, data: { ...outer.note.data, _settings_c: e.target.value } } })
@@ -1482,7 +1567,9 @@ function NoteEditor({ pos, origin_notes, closeWithoutSaving, saveAndClose, onDel
             }
           />
           <JsonifyTest outer={outer} constructor={_public.construct_jsonify} try_execute={_public.try_jsonify} />
-          <button onClick={onDeleteNote} style={{ color: "red", outline: "red 1px solid" }}>Delete note</button>
+          <button onClick={onDeleteNote} style={{ color: "red", outline: "red 1px solid" }}>
+            Delete note
+          </button>
         </div>
       )}
       {viewState === 2 ? (
@@ -1493,7 +1580,22 @@ function NoteEditor({ pos, origin_notes, closeWithoutSaving, saveAndClose, onDel
           style={{ flex: 1, width: "100%", outline: `1px solid ${err.hasError ? "red" : "aqua"}`, overflow: "auto" }}
         >
           <ErrorBoundary err={err} setErr={setErr}>
-            <CustomSettings outer={outer} pos={pos} notes={notes} />
+            <CustomSettingsGenerator
+              str={outer.note.data._settings_c}
+              updateStr={reloadSettingsState}
+              outer={outer}
+              pos={pos}
+              notes={notes}
+              local={{
+                addDependency,
+                fullCopyOuter,
+                fullCopyNote,
+                setNote,
+                setOuter,
+                setNotes,
+              }}
+              _public={_public}
+            />
           </ErrorBoundary>
         </div>
       )}
@@ -1516,6 +1618,19 @@ function NoteEditor({ pos, origin_notes, closeWithoutSaving, saveAndClose, onDel
     </div>
   );
 }
+function CustomSettingsGenerator({ str, updateStr, outer, pos, notes, local, _public }) {
+  const [CustomSettings, setCustomSettings] = useState(() => () => <></>); //two layers because counts as constructor
+  useEffect(() => {
+    if (!is_code_valid(str)) {
+      setCustomSettings(() => () => <></>);
+      return;
+    }
+    let newCustomSettings = eval(transpile(str));
+    if (typeof newCustomSettings !== "function") throw new Error("custom settings must be a function");
+    setCustomSettings(() => newCustomSettings);
+  }, [updateStr]);
+  return <CustomSettings outer={outer} pos={pos} notes={notes} local={local} _public={_public} />;
+}
 
 function PriorityTest({ outer, pos, notes, constructor }) {
   const [updatePriorityState, setUpdatePriorityState] = useState(0);
@@ -1525,7 +1640,7 @@ function PriorityTest({ outer, pos, notes, constructor }) {
   const [priority, setPriority] = useState(0);
   const [err, setErr] = useState({ hasError: false, error: null, onEval: false });
   useEffect(() => {
-    let _priority = (outer, pos, notes) => 100;
+    let _priority = () => 100;
     try {
       let failed = false;
       let err = null;
@@ -1534,6 +1649,7 @@ function PriorityTest({ outer, pos, notes, constructor }) {
     } catch (e) {
       console.error("error in priority code eval", e);
       setErr({ hasError: true, error: e, onEval: true });
+      return;
     }
     try {
       let _priority_val = _priority(outer, pos, notes);
@@ -1598,7 +1714,13 @@ function JsonifyTest({ outer, constructor, try_execute }) {
         //   <br />
         //   {JSON.stringify(json, null, 2)}
         // </pre>
-        <NameAndInput title="Jsonified" value={JSON.stringify(json, null, 2)} placeholder="jsonified" language="json" onChange={() => {}} />
+        <NameAndInput
+          title="Jsonified"
+          value={JSON.stringify(json, null, 2)}
+          placeholder="jsonified"
+          language="json"
+          onChange={() => {}}
+        />
       )}
     </>
   );
@@ -1609,20 +1731,20 @@ function NameAndInput({ title, value, placeholder, language, onChange }) {
     <div>
       {title}
       <br />
-      <CodeEditor
-        value={value}
-        placeholder={placeholder}
-        language={language}
-        onChange={onChange}
-        padding={12}
-        style={{
-          fontFamily: "ui-monospace,SFMono-Regular,SF Mono,Consolas,Liberation Mono,Menlo,monospace",
-          fontSize: "15px",
-          maxHeight: "300px", //~not sure this is useful
-          width: "90%",
-          overflow: "auto",
-        }}
-      />
+      <div style={{ maxHeight: "300px", overflow: "auto" }}>
+        <CodeEditor
+          value={value}
+          placeholder={placeholder}
+          language={language}
+          onChange={onChange}
+          padding={12}
+          style={{
+            fontFamily: "ui-monospace,SFMono-Regular,SF Mono,Consolas,Liberation Mono,Menlo,monospace",
+            fontSize: "15px",
+            width: "90%",
+          }}
+        />
+      </div>
     </div>
   );
 }
@@ -1639,18 +1761,10 @@ class ErrorBoundary extends React.Component {
   render() {
     if (this.state.hasError && !this.props.err.hasError) {
       this.props.setErr({ hasError: true, error: this.state.error, onEval: false });
-      return (
-        <>
-          <button onClick={() => this.setState({ hasError: false, error: null, onEval: false })}>Retry</button>
-          <div style={{ color: "red" }}>
-            ERROR{this.state.onEval ? " (on eval)" : ""}:{" "}
-            {this.state.error.stack ? this.state.error.stack : this.state.error}
-          </div>
-        </>
-      );
+      return <></>;
     }
     if (this.props.err.hasError) {
-      this.setState({ hasError: false, error: null, onEval: false });
+      if (this.state.hasError) this.setState({ hasError: false, error: null, onEval: false });
       return (
         <>
           <button onClick={() => this.props.setErr({ hasError: false, error: null, onEval: false })}>Retry</button>
