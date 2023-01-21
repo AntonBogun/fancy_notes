@@ -214,7 +214,6 @@ function App() {
       }
     });
     window.addEventListener("blur", () => {
-      console.log("blur", _resume_on_focus)//!debug
       if (!_block_autoupdate){
         _resume_on_focus = true;
         stop_autoupdate();
@@ -438,12 +437,7 @@ function App() {
   function construct_all_priorities(local_notes) {
     //=stateless
     return local_notes.map((outer, i) => {
-      // console.log("before, outer; construct_priority:", outer, construct_priority)//!debug
       let [priority, failed, err] = construct_priority(outer);
-      // let result=construct_priority(outer); //!debug
-      // console.log("result",result)//!debug
-      // let [priority, failed, err] = result;//!debug
-      // console.log("after")//!debug
       if (failed) {
         console.error("failed to construct priority for note " + i + ": ", err);
         html_log(["failed to construct priority for note " + i + ": ", err]);
@@ -641,7 +635,6 @@ function App() {
     clearTimeout(_sort_timeout_id);
     clearTimeout(_db_timeout_id);
     _block_autoupdate = true;
-    console.log("block at stop",_block_autoupdate); //!debug
     if (_db_cancel_token) {
       _db_cancel_token.cancel();
       // _db_cancel_token.cancel();//doesn't seem to do anything
@@ -734,7 +727,6 @@ function App() {
   }
 
   async function saveAndClose(notesToSave) {
-    console.log("saving and closing", notesToSave); //!debug
     if (_is_updating_data) {
       html_log("cannot save while updating data");
       return;
@@ -1438,7 +1430,6 @@ function NoteEditor({ pos, origin_notes, closeWithoutSaving, saveAndClose, onDel
   //bool array, decides what note fields should be copied over and what to save in database
   const [dependencies, setDependencies] = useState(Array(origin_notes.length).fill(false));
   function addDependency(_in) {
-    console.log("add dependencies", dependencies);//!debug
     //if _in is a number, convert to array
     let arr = Array.isArray(_in) ? _in : [_in];
     arr = arr.filter((x) => !dependencies[x]);
@@ -1497,19 +1488,10 @@ function NoteEditor({ pos, origin_notes, closeWithoutSaving, saveAndClose, onDel
 
   function getToSaveNotes() {
     //pos is needed in processing
-    console.log("save notes dependencies", dependencies);//!debug
-    // return notes
-    //   .map((x, i) => [x, i])
-    //   .filter(([x, i]) => dependencies[i] && !i === pos)
-    //   .concat([[outer, pos]]);
-    //!debug
-    let new_notes = notes.map((x, i) => [x, i]);//!debug
-    console.log("map new_notes", new_notes);//!debug
-    new_notes = new_notes.filter(([x, i]) => dependencies[i]&&i!==pos);//!debug
-    console.log("filter new_notes", new_notes);//!debug
-    new_notes = new_notes.concat([[outer, pos]]);//!debug
-    console.log("concat new_notes", new_notes);//!debug
-    return new_notes;
+    return notes
+      .map((x, i) => [x, i])
+      .filter(([x, i]) => dependencies[i] && !i === pos)
+      .concat([[outer, pos]]);
   }
   return (
     <div
